@@ -1,0 +1,61 @@
+# Python bytecode and caches
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual environments
+venv/
+.venv/
+env/
+ENV/
+backend/venv/
+backend/.venv/
+
+# Environment files and secrets
+.env
+.env.*
+!.env.example
+secret.key
+*.pem
+*.key
+.streamlit/secrets.toml
+backend/.env
+backend/.env.*
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*.sublime-project
+*.sublime-workspace
+.DS_Store
+Thumbs.db
+
+# Logs, temp, and build artifacts
+*.log
+logs/
+tmp/
+temp/
+*.tmp
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# Project-generated data (local runtime files)
+backend/data/uploads/
+backend/data/documents/
+backend/data/chroma/
+backend/data/**/*.json
+backend/data/**/*.bin
+backend/data/**/*.sqlite3
+
+# Keep source files and repo metadata tracked
+!README.md
+!LICENSE
+!backend/requirements.txt
