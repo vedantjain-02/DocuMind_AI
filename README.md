@@ -66,8 +66,7 @@ DocuMind AI/
 │   └── app.py
 ├── .gitignore
 ├── LICENSE
-├── README.md
-└── .vscode/
+└── README.md
 ```
 
 > Note: Generated data folders such as uploads, documents, and local virtual environment folders are not intended for public commit content.
