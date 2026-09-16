@@ -2,6 +2,10 @@ import json
 import logging
 import os
 import re
+from datetime import datetime, timezone
+from functools import lru_cache
+from datetime import datetime, timezone
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -60,6 +64,272 @@ def require_client() -> Any:
             "GROQ_API_KEY is missing. Please add it to backend/.env"
         )
     return client
+def _first_sentence(text: str) -> str:
+    cleaned = clean_text(text)
+    if not cleaned:
+        return "This document contains no readable text."
+
+    match = re.split(r"(?<=[.!?])\s+", cleaned)
+    sentence = match[0].strip()
+    if sentence:
+        return sentence[:240]
+    return cleaned[:240]
+
+
+def _normalize_summary_entry(value: str) -> str:
+    cleaned = clean_text(value or "")
+    if not cleaned:
+        return ""
+    cleaned = cleaned.replace("**", "").replace("##", "")
+    return cleaned.strip()
+
+
+def _section_lines(section_text: str) -> list[str]:
+    lines: list[str] = []
+    for raw_line in section_text.splitlines():
+        line = _normalize_summary_entry(raw_line)
+        if not line:
+            continue
+        if line.startswith("- ") or line.startswith("* "):
+            lines.append(line[2:].strip())
+        else:
+            lines.append(line)
+    unique: list[str] = []
+    seen: set[str] = set()
+    for item in lines:
+        item = item.strip()
+        if not item or item in seen:
+            continue
+        unique.append(item)
+        seen.add(item)
+    return unique[:8]
+
+
+def _build_structured_summary(summary_text: str, filename: str, document_id: str) -> dict:
+    raw_summary = (summary_text or "").strip()
+    if not raw_summary:
+        return {
+            "document_id": document_id,
+            "filename": filename,
+            "overview": "This document contains no readable text.",
+            "main_topics": [],
+            "important_points": [],
+            "key_takeaways": [],
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "source_count": 0,
+            "status": "empty",
+        }
+
+    sections: dict[str, list[str]] = {
+        "overview": [],
+        "main_topics": [],
+        "important_points": [],
+        "key_takeaways": [],
+    }
+
+    current_section = "overview"
+    section_pattern = re.compile(r"^##\s*(.+?)\s*$", re.IGNORECASE)
+    for raw_line in raw_summary.splitlines():
+        heading_match = section_pattern.match(raw_line.strip())
+        if heading_match:
+            heading = heading_match.group(1).strip().lower()
+            if "overview" in heading or "main topic" in heading:
+                current_section = "overview"
+            elif "important section" in heading or "key concept" in heading or "important definitions" in heading:
+                current_section = "important_points"
+            elif "main findings" in heading or "conclusion" in heading:
+                current_section = "key_takeaways"
+            else:
+                current_section = "main_topics"
+            continue
+
+        value = _normalize_summary_entry(raw_line)
+        if not value:
+            continue
+        if value.startswith("- ") or value.startswith("* "):
+            value = value[2:].strip()
+        if value:
+            sections[current_section].append(value)
+
+    overview = " ".join(sections["overview"]) or _first_sentence(raw_summary)
+    main_topics = sections["main_topics"] or _section_lines(raw_summary)[:3]
+    important_points = sections["important_points"] or _section_lines(raw_summary)[3:6] or [overview]
+    key_takeaways = sections["key_takeaways"] or _section_lines(raw_summary)[6:9] or [overview]
+
+    return {
+        "document_id": document_id,
+        "filename": filename,
+        "overview": overview[:600],
+        "main_topics": main_topics[:6],
+        "important_points": important_points[:6],
+        "key_takeaways": key_takeaways[:6],
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "status": "processed",
+    }
+
+
+@lru_cache(maxsize=128)
+def generate_document_summary(document_id: str) -> dict:
+    """Build a concise structured summary from the stored document text."""
+    document_id = str(document_id).strip()
+    if not document_id:
+        raise ValueError("document_id is required")
+
+    document = load_document(document_id)
+    chunks = get_all_document_chunks(document_id)
+    if not chunks:
+        return {
+            "document_id": document_id,
+            "filename": document.get("filename", "Document"),
+            "overview": "This document contains no readable text.",
+            "main_topics": [],
+            "important_points": [],
+            "key_takeaways": [],
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "source_count": 0,
+            "status": "empty",
+        }
+
+    result = summarize_document(document_id=document_id)
+    summary_text = (result.get("answer") or "").strip()
+    summary = _build_structured_summary(summary_text, document.get("filename", "Document"), document_id)
+    summary["source_count"] = len(result.get("sources") or [])
+    return summary
+
+
+
+
+def _first_sentence(text: str) -> str:
+    cleaned = clean_text(text)
+    if not cleaned:
+        return "This document contains no readable text."
+
+    match = re.split(r"(?<=[.!?])\s+", cleaned)
+    sentence = match[0].strip()
+    if sentence:
+        return sentence[:240]
+    return cleaned[:240]
+
+
+def _normalize_summary_entry(value: str) -> str:
+    cleaned = clean_text(value or "")
+    if not cleaned:
+        return ""
+    cleaned = cleaned.replace("**", "").replace("##", "")
+    return cleaned.strip()
+
+
+def _section_lines(section_text: str) -> list[str]:
+    lines: list[str] = []
+    for raw_line in section_text.splitlines():
+        line = _normalize_summary_entry(raw_line)
+        if not line:
+            continue
+        if line.startswith("- ") or line.startswith("* "):
+            lines.append(line[2:].strip())
+        else:
+            lines.append(line)
+    unique: list[str] = []
+    seen: set[str] = set()
+    for item in lines:
+        item = item.strip()
+        if not item or item in seen:
+            continue
+        unique.append(item)
+        seen.add(item)
+    return unique[:8]
+
+
+def _build_structured_summary(summary_text: str, filename: str, document_id: str) -> dict:
+    raw_summary = (summary_text or "").strip()
+    if not raw_summary:
+        return {
+            "document_id": document_id,
+            "filename": filename,
+            "overview": "This document contains no readable text.",
+            "main_topics": [],
+            "important_points": [],
+            "key_takeaways": [],
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "source_count": 0,
+            "status": "empty",
+        }
+
+    sections: dict[str, list[str]] = {
+        "overview": [],
+        "main_topics": [],
+        "important_points": [],
+        "key_takeaways": [],
+    }
+
+    current_section = "overview"
+    section_pattern = re.compile(r"^##\s*(.+?)\s*$", re.IGNORECASE)
+    for raw_line in raw_summary.splitlines():
+        heading_match = section_pattern.match(raw_line.strip())
+        if heading_match:
+            heading = heading_match.group(1).strip().lower()
+            if "overview" in heading or "main topic" in heading:
+                current_section = "overview"
+            elif "important section" in heading or "key concept" in heading or "important definitions" in heading:
+                current_section = "important_points"
+            elif "main findings" in heading or "conclusion" in heading:
+                current_section = "key_takeaways"
+            else:
+                current_section = "main_topics"
+            continue
+
+        value = _normalize_summary_entry(raw_line)
+        if not value:
+            continue
+        if value.startswith("- ") or value.startswith("* "):
+            value = value[2:].strip()
+        if value:
+            sections[current_section].append(value)
+
+    overview = " ".join(sections["overview"]) or _first_sentence(raw_summary)
+    main_topics = sections["main_topics"] or _section_lines(raw_summary)[:3]
+    important_points = sections["important_points"] or _section_lines(raw_summary)[3:6] or [overview]
+    key_takeaways = sections["key_takeaways"] or _section_lines(raw_summary)[6:9] or [overview]
+
+    return {
+        "document_id": document_id,
+        "filename": filename,
+        "overview": overview[:600],
+        "main_topics": main_topics[:6],
+        "important_points": important_points[:6],
+        "key_takeaways": key_takeaways[:6],
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "status": "processed",
+    }
+
+
+@lru_cache(maxsize=128)
+def generate_document_summary(document_id: str) -> dict:
+    """Build a concise structured summary from the stored document text."""
+    document_id = str(document_id).strip()
+    if not document_id:
+        raise ValueError("document_id is required")
+
+    document = load_document(document_id)
+    chunks = get_all_document_chunks(document_id)
+    if not chunks:
+        return {
+            "document_id": document_id,
+            "filename": document.get("filename", "Document"),
+            "overview": "This document contains no readable text.",
+            "main_topics": [],
+            "important_points": [],
+            "key_takeaways": [],
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "source_count": 0,
+            "status": "empty",
+        }
+
+    result = summarize_document(document_id=document_id)
+    summary_text = (result.get("answer") or "").strip()
+    summary = _build_structured_summary(summary_text, document.get("filename", "Document"), document_id)
+    summary["source_count"] = len(result.get("sources") or [])
+    return summary
 
 
 # ============================================================================
@@ -186,6 +456,28 @@ def load_document(document_id: str) -> dict:
             encoding="utf-8"
         )
     )
+
+
+def load_documents(document_ids: list[str]) -> list[dict]:
+    """Load multiple documents in order while preserving unique IDs."""
+    if not document_ids:
+        return []
+
+    unique_ids: list[str] = []
+    seen: set[str] = set()
+
+    for document_id in document_ids:
+        value = str(document_id).strip()
+        if not value or value in seen:
+            continue
+        seen.add(value)
+        unique_ids.append(value)
+
+    documents: list[dict] = []
+    for document_id in unique_ids:
+        documents.append(load_document(document_id))
+
+    return documents
 
 
 # ============================================================================
@@ -590,6 +882,7 @@ def source_from_chunk(
     retrieved_chunks: list[dict],
     page_lookup: dict,
     page: int | None,
+    document: dict | None = None,
 ) -> dict | None:
     """
     Creates the source object expected by frontend/app.py.
@@ -615,56 +908,234 @@ def source_from_chunk(
             best_chunk.get("text", "")
         )
 
-    source_text = source_text[
-        :MAX_SOURCE_TEXT_CHARS
-    ]
+    source_text = source_text[:MAX_SOURCE_TEXT_CHARS]
 
-    # Find the complete paragraph/chunk in page text.
     span = find_text_span(
         page_text=page_text,
         quote=source_text,
     )
 
-    character_start = (
-        span[0]
-        if span
-        else best_chunk.get("char_start")
-    )
+    character_start = span[0] if span else best_chunk.get("char_start")
+    character_end = span[1] if span else best_chunk.get("char_end")
 
-    character_end = (
-        span[1]
-        if span
-        else best_chunk.get("char_end")
-    )
-
-    score = (
-        best_chunk.get("relevance_score")
-        or best_chunk.get("_score")
-        or 0.0
-    )
-
+    score = best_chunk.get("relevance_score") or best_chunk.get("_score") or 0.0
     try:
         score = round(float(score), 4)
     except (TypeError, ValueError):
         score = 0.0
 
-    title = (
-        f"Page {page}"
-        if page is not None
-        else "Document"
-    )
-
-    return {
+    source = {
         "page": page,
         "chunk_id": best_chunk.get("chunk_id"),
         "chunk_index": best_chunk.get("chunk_index"),
-        "title": title,
+        "title": f"Page {page}" if page is not None else "Document",
         "exact_text": source_text,
         "preview": source_text[:MAX_PREVIEW_CHARS],
         "relevance_score": score,
         "character_start": character_start,
         "character_end": character_end,
     }
+
+    if document:
+        source["document_id"] = document.get("document_id")
+        source["filename"] = document.get("filename")
+        source["file_type"] = document.get("file_type")
+        if source.get("title") == "Document":
+            source["title"] = document.get("filename") or "Document"
+
+    return source
+
+
+# ============================================================================
+# FRESH SOURCE CREATION (RETRIEVAL ONLY)
+# ============================================================================
+
+def _document_page_text(
+    document: dict | None,
+    page: int | None,
+) -> str:
+    """
+    Returns the normalized text of a page that belongs to a document record.
+    Used only to sanity-check that a chunk really lives on the page.
+    """
+    if not isinstance(document, dict):
+        return ""
+
+    for page_data in document.get("pages", []) or []:
+        if normalize_page_number(page_data.get("page")) == page:
+            return clean_text(page_data.get("text", ""))
+
+    return ""
+
+
+def build_document_sources(
+    retrieved_chunks: list[dict],
+    document_map: dict[str, dict],
+    max_sources: int = MAX_SOURCE_PAGES,
+) -> list[dict]:
+    """
+    Builds fresh source records directly from the retrieval result.
+
+    The source text is the exact chunk text stored in the document JSON.
+    Page numbers come from the chunk metadata, never from the LLM.
+
+    Rules enforced here:
+
+    - One source per (document_id, page).
+    - Chunks that do not belong to an uploaded document are dropped.
+    - Sources without usable text are skipped.
+    - No LLM-generated quote is ever used as source text.
+    """
+    if not retrieved_chunks or not document_map:
+        return []
+
+    page_groups: dict[tuple[str, int], list[dict]] = {}
+    page_order: list[tuple[str, int]] = []
+
+    for chunk in retrieved_chunks:
+        page = normalize_page_number(chunk.get("page"))
+        if page is None:
+            continue
+
+        text = clean_text(chunk.get("text", ""))
+        if not text:
+            continue
+
+        document_id = str(chunk.get("document_id") or "").strip()
+        if not document_id or document_id not in document_map:
+            continue
+
+        page_text = _document_page_text(
+            document_map.get(document_id),
+            page,
+        )
+        # Safety net: if the chunk cannot be located on the claimed page,
+        # skip it so we never send a wrong page number.
+        if not page_text or not find_text_span(
+            page_text=page_text,
+            quote=text,
+        ):
+            continue
+
+        try:
+            score = float(
+                chunk.get("relevance_score")
+                or chunk.get("_score")
+                or 0.0
+            )
+        except (TypeError, ValueError):
+            score = 0.0
+
+        key = (document_id, page)
+        if key not in page_groups:
+            page_groups[key] = []
+            page_order.append(key)
+        page_groups[key].append({"chunk": chunk, "score": score})
+
+    if not page_order:
+        return []
+
+    ranked_pages = sorted(
+        page_order,
+        key=lambda key: max(
+            item["score"]
+            for item in page_groups[key]
+        ),
+        reverse=True,
+    )
+
+    sources: list[dict] = []
+    seen_key: set[tuple[str, int]] = set()
+
+    for key in ranked_pages:
+        if key in seen_key:
+            continue
+        seen_key.add(key)
+
+        document_id, page = key
+        document = document_map.get(document_id)
+        if document is None:
+            continue
+
+        best = max(
+            page_groups[key],
+            key=lambda item: item["score"],
+        )
+        chunk = best["chunk"]
+
+        exact_text = clean_text(chunk.get("text", ""))
+        if not exact_text:
+            continue
+        exact_text = exact_text[:MAX_SOURCE_TEXT_CHARS]
+
+        source = {
+            "page": page,
+            "document_id": document.get("document_id"),
+            "filename": document.get("filename"),
+            "file_type": document.get("file_type"),
+            "chunk_id": chunk.get("chunk_id"),
+            "chunk_index": chunk.get("chunk_index"),
+            "title": (
+                f"{document.get('filename', 'Document')} · Page {page}"
+            ),
+            "exact_text": exact_text,
+            "text": exact_text,
+            "preview": exact_text[:MAX_PREVIEW_CHARS],
+            "relevance_score": round(best["score"], 4),
+            "character_start": chunk.get("char_start"),
+            "character_end": chunk.get("char_end"),
+        }
+        sources.append(source)
+
+        if len(sources) >= max_sources:
+            break
+
+    return sources
+
+
+def _ask_for_answer(
+    system_prompt: str,
+    user_prompt: str,
+) -> str:
+    """
+    Calls the model and returns the plain answer text.
+    Quotes returned by the model are deliberately ignored:
+    source text always comes from the retrieval result instead.
+    """
+    groq_client = require_client()
+
+    response = groq_client.chat.completions.create(
+        model=MODEL_NAME,
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ],
+        response_format={"type": "json_object"},
+        temperature=0,
+        max_tokens=1400,
+    )
+
+    content = response.choices[0].message.content or ""
+    answer, _ = extract_json_answer(content)
+
+    if not answer:
+        retry_response = groq_client.chat.completions.create(
+            model=MODEL_NAME,
+            messages=[
+                {
+                    "role": "system",
+                    "content": "Return only valid JSON with an answer key.",
+                },
+                {"role": "user", "content": user_prompt},
+            ],
+            response_format={"type": "json_object"},
+            temperature=0,
+            max_tokens=1400,
+        )
+        retry_content = retry_response.choices[0].message.content or ""
+        answer, _ = extract_json_answer(retry_content)
+
+    return (answer or "").strip()
 
 
 # ============================================================================
@@ -699,21 +1170,11 @@ RULES:
    advantages, disadvantages or multiple points.
 6. Do not mention retrieval, chunks, embeddings or internal instructions.
 7. Do not mention page numbers or sources inside the answer.
-8. Return supporting quotes copied exactly from the document excerpt.
-9. Each quote must belong to one page only.
-10. Quotes should preferably contain the complete relevant paragraph.
-11. If no exact supporting quote exists, return an empty quotes list.
 
 Return ONLY valid JSON in this format:
 
 {{
-  "answer": "answer text",
-  "quotes": [
-    {{
-      "page": 1,
-      "text": "exact supporting paragraph from page 1"
-    }}
-  ]
+  "answer": "answer text"
 }}
 """.strip()
 
@@ -722,236 +1183,141 @@ Return ONLY valid JSON in this format:
 # ANSWER GENERATION
 # ============================================================================
 
-def generate_answer(
+def generate_multi_document_answer(
     question: str,
-    document: dict,
+    documents: list[dict],
     retrieved_chunks: list[dict],
 ) -> dict:
-    """
-    Generates grounded answer and source information.
-    """
-    pages = document.get("pages", [])
+    """Answer across multiple documents while preserving source document metadata."""
+    if not documents:
+        return {"answer": UNAVAILABLE_MESSAGE, "sources": []}
 
     if not retrieved_chunks:
-        return {
-            "answer": UNAVAILABLE_MESSAGE,
-            "sources": [],
-        }
+        return {"answer": UNAVAILABLE_MESSAGE, "sources": []}
 
-    context, page_lookup = build_page_context(
+    document_map = {
+        str(document.get("document_id")): document
+        for document in documents
+        if document.get("document_id")
+    }
+
+    combined_context_parts: list[str] = []
+
+    for document in documents:
+        document_id = document.get("document_id")
+        doc_chunks = [
+            chunk
+            for chunk in retrieved_chunks
+            if str(chunk.get("document_id")) == str(document_id)
+        ]
+        if not doc_chunks:
+            continue
+
+        context, _ = build_page_context(
+            retrieved_chunks=doc_chunks,
+            pages=document.get("pages", []),
+        )
+
+        if context.strip():
+            combined_context_parts.append(
+                f"--- {document.get('filename', 'Document')} ---\n{context}"
+            )
+
+    combined_context = "\n\n".join(combined_context_parts)
+    if not combined_context.strip():
+        return {"answer": UNAVAILABLE_MESSAGE, "sources": []}
+
+    prompt = build_prompt(question=question, context=combined_context)
+    answer = _ask_for_answer(
+        system_prompt="You are DocuMind AI. Answer only from the supplied documents and return valid JSON only.",
+        user_prompt=prompt,
+    )
+    answer = answer or UNAVAILABLE_MESSAGE
+
+    if answer == UNAVAILABLE_MESSAGE:
+        return {"answer": UNAVAILABLE_MESSAGE, "sources": []}
+
+    sources = build_document_sources(
+        retrieved_chunks=retrieved_chunks,
+        document_map=document_map,
+    )
+
+    return {"answer": answer, "sources": sources}
+
+
+def generate_answer(
+    question: str,
+    document: dict | list[dict],
+    retrieved_chunks: list[dict],
+    document_ids: list[str] | None = None,
+    documents: list[dict] | None = None,
+) -> dict:
+    """
+    Generates a grounded answer with sources.
+
+    Sources are always built from the retrieval result using real chunk text.
+    LLM-generated quotes are never used as source text.
+    """
+    if isinstance(document, list):
+        documents = document or documents or []
+        if len(documents) > 1:
+            return generate_multi_document_answer(
+                question=question,
+                documents=documents,
+                retrieved_chunks=retrieved_chunks,
+            )
+        document = documents[0] if documents else {}
+
+    if document_ids and documents and len(documents) > 1:
+        return generate_multi_document_answer(
+            question=question,
+            documents=documents,
+            retrieved_chunks=retrieved_chunks,
+        )
+
+    pages = document.get("pages", []) if isinstance(document, dict) else []
+
+    if not retrieved_chunks:
+        return {"answer": UNAVAILABLE_MESSAGE, "sources": []}
+
+    context, _page_lookup = build_page_context(
         retrieved_chunks=retrieved_chunks,
         pages=pages,
     )
 
     if not context.strip():
-        return {
-            "answer": UNAVAILABLE_MESSAGE,
-            "sources": [],
-        }
+        return {"answer": UNAVAILABLE_MESSAGE, "sources": []}
 
-    prompt = build_prompt(
-        question=question,
-        context=context,
+    prompt = build_prompt(question=question, context=context)
+    answer = _ask_for_answer(
+        system_prompt=(
+            "You are DocuMind AI. Answer only from the supplied "
+            "document and return valid JSON only."
+        ),
+        user_prompt=prompt,
     )
 
-    groq_client = require_client()
-
-    response = groq_client.chat.completions.create(
-        model=MODEL_NAME,
-        messages=[
-            {
-                "role": "system",
-                "content": (
-                    "You are DocuMind AI. "
-                    "Answer only from the supplied document. "
-                    "Return valid JSON only."
-                ),
-            },
-            {
-                "role": "user",
-                "content": prompt,
-            },
-        ],
-        response_format={
-            "type": "json_object"
-        },
-        temperature=0,
-        max_tokens=1400,
-    )
-
-    content = (
-        response.choices[0].message.content
-        or ""
-    )
-
-    answer, raw_quotes = extract_json_answer(
-        content
-    )
-
-    # Retry once if model response is invalid.
-    if not answer:
-        retry_response = groq_client.chat.completions.create(
-            model=MODEL_NAME,
-            messages=[
-                {
-                    "role": "system",
-                    "content": (
-                        "Return only valid JSON with keys "
-                        "answer and quotes."
-                    ),
-                },
-                {
-                    "role": "user",
-                    "content": prompt,
-                },
-            ],
-            response_format={
-                "type": "json_object"
-            },
-            temperature=0,
-            max_tokens=1400,
-        )
-
-        retry_content = (
-            retry_response.choices[0].message.content
-            or ""
-        )
-
-        answer, raw_quotes = extract_json_answer(
-            retry_content
-        )
-
-    answer = answer.strip()
-
-    if not answer:
-        answer = UNAVAILABLE_MESSAGE
+    answer = answer or UNAVAILABLE_MESSAGE
 
     if answer == UNAVAILABLE_MESSAGE:
-        return {
-            "answer": UNAVAILABLE_MESSAGE,
-            "sources": [],
-        }
+        return {"answer": UNAVAILABLE_MESSAGE, "sources": []}
 
-    # ========================================================================
-    # VERIFY MODEL QUOTES
-    # ========================================================================
-
-    verified_quotes: list[dict] = []
-    used_pages: list[int] = []
-
-    for quote in raw_quotes:
-        if not isinstance(quote, dict):
-            continue
-
-        quote_page = normalize_page_number(
-            quote.get("page")
-        )
-
-        quote_text = clean_text(
-            quote.get("text", "")
-        )
-
-        if quote_page is None:
-            continue
-
-        if not quote_text:
-            continue
-
-        actual_page_text = page_lookup.get(
-            quote_page,
-            "",
-        )
-
-        if not quote_is_in_page(
-            page_text=actual_page_text,
-            quote=quote_text,
-        ):
-            continue
-
-        verified_quotes.append(
-            {
-                "page": quote_page,
-                "text": quote_text,
-            }
-        )
-
-        if quote_page not in used_pages:
-            used_pages.append(quote_page)
-
-    # ========================================================================
-    # FALLBACK TO RETRIEVED PAGES
-    # ========================================================================
-
-    if not used_pages:
-        for chunk in retrieved_chunks:
-            page = normalize_page_number(
-                chunk.get("page")
+    document_map: dict[str, dict] = {}
+    if isinstance(document, dict) and document.get("document_id"):
+        document_map[str(document["document_id"])] = document
+    for doc in documents or []:
+        if doc.get("document_id"):
+            document_map.setdefault(
+                str(doc["document_id"]),
+                doc,
             )
 
-            if page is None:
-                continue
+    sources = build_document_sources(
+        retrieved_chunks=retrieved_chunks,
+        document_map=document_map,
+    )
 
-            if page not in used_pages:
-                used_pages.append(page)
-
-    # ========================================================================
-    # BUILD FINAL SOURCES
-    # ========================================================================
-
-    sources: list[dict] = []
-
-    for page in used_pages[:MAX_SOURCE_PAGES]:
-        source = source_from_chunk(
-            question=question,
-            retrieved_chunks=retrieved_chunks,
-            page_lookup=page_lookup,
-            page=page,
-        )
-
-        if source is None:
-            continue
-
-        page_quotes = [
-            quote["text"]
-            for quote in verified_quotes
-            if quote["page"] == page
-        ]
-
-        # Prefer the verified complete paragraph from model.
-        if page_quotes:
-            exact_text = page_quotes[0]
-
-            source["exact_text"] = exact_text
-            source["preview"] = (
-                exact_text[:MAX_PREVIEW_CHARS]
-            )
-
-            exact_span = find_text_span(
-                page_text=page_lookup.get(
-                    page,
-                    "",
-                ),
-                quote=exact_text,
-            )
-
-            source["character_start"] = (
-                exact_span[0]
-                if exact_span
-                else source.get("character_start")
-            )
-
-            source["character_end"] = (
-                exact_span[1]
-                if exact_span
-                else source.get("character_end")
-            )
-
-        sources.append(source)
-
-    return {
-        "answer": answer,
-        "sources": sources,
-    }
+    return {"answer": answer, "sources": sources}
 
 
 # ============================================================================
@@ -1335,46 +1701,74 @@ RULES:
     return (response.choices[0].message.content or "").strip()
 
 
-def summarize_document(document_id: str) -> dict:
+def summarize_document(document_id: str | list[str] | None = None, document_ids: list[str] | None = None) -> dict:
     """
-    Full-document summarization handler:
-    1. Loads all chunks in order for document_id.
-    2. Validates document content (handles empty documents safely).
-    3. Chooses between direct summary mode (small documents) and map-reduce summary mode (large documents).
-    4. Generates structured summary and builds representative sources.
+    Full-document summarization handler for one or many documents.
     """
-    if not document_id or not str(document_id).strip():
+    if document_ids is None:
+        if isinstance(document_id, list):
+            document_ids = document_id
+        else:
+            document_ids = [document_id] if document_id else []
+
+    if not document_ids:
         raise ValueError("document_id is required")
 
-    chunks = get_all_document_chunks(document_id)
+    all_chunks: list[dict] = []
+    sources: list[dict] = []
 
-    if not chunks:
+    for active_document_id in document_ids:
+        document = load_document(active_document_id)
+        chunks = get_all_document_chunks(active_document_id)
+        for chunk in chunks:
+            chunk_copy = dict(chunk)
+            chunk_copy["document_id"] = document.get("document_id")
+            chunk_copy["filename"] = document.get("filename")
+            chunk_copy["file_type"] = document.get("file_type")
+            all_chunks.append(chunk_copy)
+
+    if not all_chunks:
         logger.info("[DocuMind AI] Empty document encountered for summarization.")
-        print("[DocuMind AI] Empty document encountered for summarization.", flush=True)
         return {
             "answer": "The uploaded document contains no readable text or content to summarize.",
             "sources": [],
         }
 
-    total_chars = sum(len(clean_text(c.get("text", ""))) for c in chunks)
-    MAX_DIRECT_CHUNKS = 8
+    if len(document_ids) > 1:
+        # Keep multi-document summaries within Groq token limits while still
+        # preserving representative coverage across the uploaded set.
+        all_chunks = all_chunks[:12]
+
+    total_chars = sum(len(clean_text(c.get("text", ""))) for c in all_chunks)
+    MAX_DIRECT_CHUNKS = 8 if len(document_ids) <= 1 else 6
     MAX_DIRECT_CHARS = 10000
 
-    if len(chunks) <= MAX_DIRECT_CHUNKS and total_chars <= MAX_DIRECT_CHARS:
-        logger.info("[DocuMind AI] Request mode: full-document summary mode")
-        print("[DocuMind AI] Request mode: full-document summary mode", flush=True)
-        summary_text = summarize_direct(chunks)
+    if len(all_chunks) <= MAX_DIRECT_CHUNKS and total_chars <= MAX_DIRECT_CHARS:
+        summary_text = summarize_direct(all_chunks)
     else:
-        logger.info("[DocuMind AI] Request mode: map-reduce summary mode")
-        print("[DocuMind AI] Request mode: map-reduce summary mode", flush=True)
-        summary_text = summarize_chunks_in_batches(chunks)
+        summary_text = summarize_chunks_in_batches(all_chunks)
 
-    sources = build_summary_sources(chunks, max_sources=4)
+    if len(document_ids) == 1:
+        sources = build_summary_sources(all_chunks, max_sources=4)
+    else:
+        for chunk in all_chunks[:4]:
+            page = normalize_page_number(chunk.get("page"))
+            text = clean_text(chunk.get("text", ""))
+            source = {
+                "page": page,
+                "document_id": chunk.get("document_id"),
+                "filename": chunk.get("filename"),
+                "file_type": chunk.get("file_type"),
+                "title": f"{chunk.get('filename', 'Document')}" + (f" · Page {page}" if page is not None else ""),
+                "exact_text": text[:MAX_SOURCE_TEXT_CHARS],
+                "preview": text[:MAX_PREVIEW_CHARS],
+                "relevance_score": 1.0,
+                "chunk_id": chunk.get("chunk_id"),
+                "chunk_index": chunk.get("chunk_index"),
+            }
+            sources.append(source)
 
-    return {
-        "answer": summary_text,
-        "sources": sources,
-    }
+    return {"answer": summary_text, "sources": sources}
 
 
 # ============================================================================

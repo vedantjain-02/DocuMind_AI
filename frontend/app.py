@@ -1,14 +1,20 @@
+import hashlib
+import html
+import logging
 import re
 from io import BytesIO
+from typing import Any
 
 import fitz
 import requests
 import streamlit as st
 
 
-# ============================================================
+# ============================================================================
 # CONFIGURATION
-# ============================================================
+# ============================================================================
+
+LOGGER = logging.getLogger("documind.frontend")
 
 BACKEND_URL = "http://127.0.0.1:8000"
 
@@ -20,265 +26,324 @@ st.set_page_config(
 )
 
 
-# ============================================================
-# CUSTOM THEME
-# ============================================================
+# ============================================================================
+# PROFESSIONAL DARK THEME (navy / indigo palette)
+# ============================================================================
+
+APP_CSS = """
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+
+html, body, [class*="css"] {
+    font-family: "Inter", sans-serif;
+}
+
+.stApp {
+    background:
+        radial-gradient(circle at 88% -5%, rgba(99, 102, 241, 0.20), transparent 32%),
+        radial-gradient(circle at -5% 100%, rgba(34, 211, 238, 0.10), transparent 28%),
+        #080c1a;
+    color: #e6eaf5;
+}
+
+[data-testid="stHeader"] {
+    background: transparent;
+}
+
+[data-testid="stSidebar"] {
+    background: linear-gradient(180deg, #0b1020 0%, #0d1328 100%);
+    border-right: 1px solid #232c4d;
+}
+
+[data-testid="stSidebar"] > div:first-child {
+    padding: 18px 14px;
+}
+
+[data-testid="stSidebar"] * {
+    color: #dfe6f5;
+}
+
+.main-title {
+    color: #f4f6ff;
+    font-size: 40px;
+    font-weight: 800;
+    letter-spacing: -1.5px;
+    margin: 4px 0 2px;
+}
+
+.subtitle {
+    color: #8f9cc4;
+    font-size: 13px;
+    margin-bottom: 20px;
+}
+
+.brand-chip {
+    width: 46px;
+    height: 46px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 14px;
+    background: linear-gradient(135deg, #6366f1, #8b5cf6);
+    box-shadow: 0 10px 30px rgba(99, 102, 241, 0.35);
+    font-size: 24px;
+    margin-bottom: 6px;
+}
+
+.sidebar-brand {
+    display: flex;
+    align-items: center;
+    gap: 11px;
+    color: #ffffff;
+    font-size: 18px;
+    font-weight: 800;
+    margin-bottom: 4px;
+}
+
+.sidebar-brand-icon {
+    width: 34px;
+    height: 34px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 10px;
+    background: linear-gradient(135deg, #6366f1, #06b6d4);
+    box-shadow: 0 6px 18px rgba(99, 102, 241, 0.35);
+    font-size: 17px;
+}
+
+.sidebar-caption {
+    color: #7e8bb0;
+    font-size: 11px;
+    line-height: 1.7;
+    margin-bottom: 14px;
+}
+
+.sidebar-section {
+    color: #6f7da8;
+    text-transform: uppercase;
+    letter-spacing: 1.4px;
+    font-size: 10px;
+    font-weight: 800;
+    margin: 20px 0 9px;
+}
+
+.panel-title {
+    color: #f1f3ff;
+    font-size: 19px;
+    font-weight: 800;
+}
+
+.panel-sub {
+    color: #7e8bb0;
+    font-size: 12px;
+    margin: 3px 0 12px;
+}
+
+.empty-state {
+    text-align: center;
+    padding: 96px 18px;
+    color: #8290b6;
+}
+
+.empty-icon {
+    font-size: 42px;
+    margin-bottom: 12px;
+}
+
+.empty-title {
+    color: #dfe6f5;
+    font-size: 17px;
+    font-weight: 700;
+    margin-bottom: 8px;
+}
+
+.empty-text {
+    color: #8290b6;
+    font-size: 12px;
+    line-height: 1.9;
+}
+
+.source-label {
+    color: #818cf8;
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: 0.8px;
+    margin: 14px 0 7px;
+    text-transform: uppercase;
+}
+
+.source-preview {
+    color: #a2aed0;
+    font-size: 11px;
+    line-height: 1.7;
+    padding: 9px 12px;
+    border-left: 3px solid #6366f1;
+    background: rgba(16, 23, 46, 0.85);
+    border-radius: 0 9px 9px 0;
+    margin-bottom: 10px;
+}
+
+.doc-card {
+    background: #101730;
+    border: 1px solid #263055;
+    border-radius: 12px;
+    padding: 11px 12px;
+    margin-bottom: 9px;
+}
+
+.doc-card.active {
+    border-color: #6366f1;
+    box-shadow: 0 0 0 1px rgba(99, 102, 241, 0.25);
+}
+
+.doc-name {
+    color: #dfe6f5;
+    font-size: 12px;
+    font-weight: 700;
+    line-height: 1.6;
+    word-break: break-word;
+}
+
+.doc-meta {
+    color: #6f7da8;
+    font-size: 11px;
+    margin-top: 4px;
+}
+
+.status-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    color: #86efac;
+    background: rgba(22, 101, 52, 0.20);
+    border: 1px solid rgba(74, 222, 128, 0.25);
+    border-radius: 999px;
+    padding: 5px 9px;
+    font-size: 11px;
+    font-weight: 700;
+}
+
+.status-dot {
+    width: 7px;
+    height: 7px;
+    background: #4ade80;
+    border-radius: 50%;
+    box-shadow: 0 0 10px rgba(74, 222, 128, 0.7);
+}
+
+.metric-card {
+    background: #101730;
+    border: 1px solid #263055;
+    border-radius: 12px;
+    padding: 10px 12px;
+}
+
+.metric-label {
+    color: #6f7da8;
+    font-size: 10px;
+    margin-bottom: 4px;
+}
+
+.metric-value {
+    color: #f1f3ff;
+    font-size: 21px;
+    font-weight: 800;
+}
+
+.stButton > button {
+    background: #111a33;
+    color: #dbe3f3;
+    border: 1px solid #2a3557;
+    border-radius: 10px;
+    font-weight: 600;
+    min-height: 38px;
+    transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.stButton > button:hover {
+    background: #1a2547;
+    color: #ffffff;
+    border-color: #818cf8;
+}
+
+.stButton > button[kind="primary"] {
+    background: linear-gradient(135deg, #6366f1, #8b5cf6);
+    border: 1px solid transparent;
+    color: #ffffff;
+}
+
+.stButton > button[kind="primary"]:hover {
+    background: linear-gradient(135deg, #4f46e5, #7c3aed);
+}
+
+[data-testid="stChatMessage"] {
+    background: #10172e;
+    border: 1px solid #242e52;
+    border-radius: 14px;
+    padding: 12px 14px;
+}
+
+[data-testid="stChatMessage"] p {
+    font-size: 13px;
+    line-height: 1.75;
+}
+
+[data-testid="stChatInput"] textarea {
+    background: #0f1730;
+    color: #eef2ff;
+    border: 1px solid #2c3961;
+    border-radius: 12px;
+}
+
+[data-testid="stChatInput"] textarea:focus {
+    border-color: #6366f1;
+    box-shadow: 0 0 0 1px #6366f1;
+}
+
+[data-testid="stFileUploader"] {
+    background: #101730;
+    border: 1px dashed #38446e;
+    border-radius: 12px;
+    padding: 6px;
+}
+
+[data-testid="stVerticalBlockBorderWrapper"] {
+    background: rgba(10, 16, 33, 0.7);
+    border-color: #222b4d !important;
+    border-radius: 15px !important;
+}
+
+hr {
+    border-color: #232c4d;
+}
+"""
 
 st.markdown(
-    """
-    <style>
-        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
-
-        html, body, [class*="css"] {
-            font-family: 'Inter', sans-serif;
-        }
-
-        .stApp {
-            background:
-                radial-gradient(
-                    circle at top right,
-                    rgba(37, 99, 235, 0.13),
-                    transparent 32%
-                ),
-                linear-gradient(
-                    135deg,
-                    #07111f 0%,
-                    #0b1729 48%,
-                    #101c31 100%
-                );
-            color: #e5edf8;
-        }
-
-        [data-testid="stHeader"] {
-            background: transparent;
-        }
-
-        [data-testid="stSidebar"] {
-            background: linear-gradient(
-                180deg,
-                #091525 0%,
-                #0d1b30 100%
-            );
-            border-right: 1px solid rgba(148, 163, 184, 0.16);
-        }
-
-        [data-testid="stSidebar"] * {
-            color: #dbeafe;
-        }
-
-        .main-title {
-            font-size: 42px;
-            font-weight: 800;
-            letter-spacing: -1.8px;
-            line-height: 1.1;
-            margin-top: 8px;
-            margin-bottom: 8px;
-            background: linear-gradient(
-                90deg,
-                #ffffff,
-                #93c5fd,
-                #60a5fa
-            );
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-        }
-
-        .subtitle {
-            color: #94a3b8;
-            font-size: 14px;
-            margin-bottom: 26px;
-        }
-
-        .brand-mark {
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            width: 42px;
-            height: 42px;
-            border-radius: 13px;
-            background: linear-gradient(
-                135deg,
-                #2563eb,
-                #38bdf8
-            );
-            box-shadow: 0 8px 25px rgba(37, 99, 235, 0.35);
-            font-size: 22px;
-            margin-bottom: 14px;
-        }
-
-        .section-title {
-            font-size: 19px;
-            font-weight: 700;
-            color: #f8fafc;
-            margin-bottom: 4px;
-        }
-
-        .section-subtitle {
-            font-size: 12px;
-            color: #94a3b8;
-            margin-bottom: 14px;
-        }
-
-        .status-badge {
-            display: inline-flex;
-            align-items: center;
-            gap: 7px;
-            background: rgba(34, 197, 94, 0.12);
-            border: 1px solid rgba(34, 197, 94, 0.28);
-            color: #86efac;
-            border-radius: 999px;
-            padding: 7px 12px;
-            font-size: 12px;
-            font-weight: 600;
-        }
-
-        .status-dot {
-            width: 7px;
-            height: 7px;
-            border-radius: 50%;
-            background: #22c55e;
-            box-shadow: 0 0 10px rgba(34, 197, 94, 0.8);
-        }
-
-        .empty-state {
-            text-align: center;
-            padding: 80px 20px;
-            color: #94a3b8;
-        }
-
-        .empty-icon {
-            font-size: 48px;
-            margin-bottom: 16px;
-        }
-
-        .empty-title {
-            color: #e2e8f0;
-            font-size: 18px;
-            font-weight: 700;
-            margin-bottom: 8px;
-        }
-
-        .empty-text {
-            font-size: 13px;
-            line-height: 1.7;
-        }
-
-        .source-label {
-            color: #93c5fd;
-            font-size: 12px;
-            font-weight: 700;
-            margin-top: 12px;
-            margin-bottom: 6px;
-        }
-
-        .source-preview {
-            color: #94a3b8;
-            font-size: 11px;
-            line-height: 1.5;
-            padding: 8px 10px;
-            border-left: 2px solid #2563eb;
-            background: rgba(37, 99, 235, 0.07);
-            border-radius: 4px;
-            margin-bottom: 8px;
-        }
-
-        .stButton > button {
-            border-radius: 9px;
-            border: 1px solid rgba(96, 165, 250, 0.24);
-            background: rgba(30, 64, 175, 0.18);
-            color: #dbeafe;
-            font-weight: 600;
-            transition: all 0.2s ease;
-        }
-
-        .stButton > button:hover {
-            border-color: #60a5fa;
-            background: rgba(37, 99, 235, 0.35);
-            color: white;
-        }
-
-        .stDownloadButton > button {
-            border-radius: 9px;
-        }
-
-        [data-testid="stChatMessage"] {
-            background: rgba(15, 23, 42, 0.58);
-            border: 1px solid rgba(148, 163, 184, 0.12);
-            border-radius: 14px;
-            margin-bottom: 10px;
-        }
-
-        [data-testid="stChatMessageContent"] {
-            color: #dbeafe;
-        }
-
-        [data-testid="stFileUploader"] {
-            background: rgba(15, 23, 42, 0.55);
-            border: 1px dashed rgba(96, 165, 250, 0.35);
-            border-radius: 12px;
-            padding: 8px;
-        }
-
-        [data-testid="stVerticalBlockBorderWrapper"] {
-            border: 1px solid rgba(148, 163, 184, 0.16);
-            border-radius: 16px;
-            background: rgba(8, 18, 33, 0.48);
-        }
-
-        .stTextInput input,
-        .stNumberInput input {
-            background: rgba(15, 23, 42, 0.8);
-            color: #e2e8f0;
-            border: 1px solid rgba(96, 165, 250, 0.25);
-            border-radius: 9px;
-        }
-
-        .stSelectbox div[data-baseweb="select"] {
-            background: rgba(15, 23, 42, 0.8);
-            border-radius: 9px;
-        }
-
-        hr {
-            border-color: rgba(148, 163, 184, 0.15);
-        }
-
-        .metric-card {
-            background: rgba(15, 23, 42, 0.62);
-            border: 1px solid rgba(96, 165, 250, 0.15);
-            border-radius: 12px;
-            padding: 12px;
-            margin-bottom: 12px;
-        }
-
-        .metric-label {
-            color: #94a3b8;
-            font-size: 11px;
-        }
-
-        .metric-value {
-            color: #e0f2fe;
-            font-size: 20px;
-            font-weight: 800;
-            margin-top: 3px;
-        }
-    </style>
-    """,
+    f"""<style>{APP_CSS}</style>""",
     unsafe_allow_html=True,
 )
 
 
-# ============================================================
+# ============================================================================
 # SESSION STATE
-# ============================================================
+# ============================================================================
 
 DEFAULT_STATE = {
     "document_id": None,
     "filename": None,
     "pdf_bytes": None,
+    "documents": [],
+    "documents_needs_refresh": True,
+    "processed_file_fingerprints": set(),
+    "upload_statuses": [],
     "messages": [],
+    "conversation_id": None,
+    "conversation_title": "New chat",
+    "conversations": [],
     "current_page": 1,
     "page_input": 1,
     "highlight_text": "",
+    "active_source_key": None,
     "pending_page": None,
     "upload_key": 0,
     "total_pages": 0,
@@ -290,282 +355,851 @@ for key, value in DEFAULT_STATE.items():
         st.session_state[key] = value
 
 
-# ============================================================
-# TEXT HELPERS
-# ============================================================
+# ============================================================================
+# GENERAL HELPERS
+# ============================================================================
 
-def normalize_text(text: str) -> str:
+def safe_text(value: Any) -> str:
+    return str(value or "").strip()
+
+
+def escape_html(value: Any) -> str:
+    return html.escape(str(value or ""))
+
+
+def compute_file_fingerprint(uploaded_file) -> str:
+    file_bytes = uploaded_file.getvalue()
+    digest = hashlib.sha256(file_bytes).hexdigest()
+    return f"{uploaded_file.name}:{uploaded_file.size}:{digest}"
+
+
+def truncate_display(text: Any, limit: int = 32) -> str:
+    value = " ".join(str(text or "").split())
+    if len(value) <= limit:
+        return value
+    return value[:limit].rstrip() + "…"
+
+
+def auto_title(question: str, limit: int = 40) -> str:
+    title = " ".join(str(question or "").split())
+    if len(title) > limit:
+        title = title[:limit].rstrip() + "…"
+    return title if title else "New chat"
+
+
+def reset_document_viewer():
+    st.session_state.pdf_bytes = None
+    st.session_state.current_page = 1
+    st.session_state.page_input = 1
+    st.session_state.pending_page = None
+    st.session_state.highlight_text = ""
+    st.session_state.active_source_key = None
+    st.session_state.total_pages = 0
+    st.session_state.total_chunks = 0
+
+
+def clear_highlight():
+    st.session_state.highlight_text = ""
+    st.session_state.active_source_key = None
+
+
+# ============================================================================
+# DOCUMENT API
+# ============================================================================
+
+def fetch_selected_document_bytes(document_id: str):
+    try:
+        response = requests.get(
+            f"{BACKEND_URL}/api/documents/{document_id}/file",
+            timeout=60,
+        )
+        response.raise_for_status()
+        return response.content
+    except requests.exceptions.RequestException:
+        return None
+
+
+def refresh_documents():
+    try:
+        response = requests.get(
+            f"{BACKEND_URL}/api/documents",
+            timeout=30,
+        )
+        response.raise_for_status()
+
+        documents = response.json() or []
+        st.session_state.documents = documents
+        st.session_state.documents_needs_refresh = False
+
+        if not documents:
+            st.session_state.document_id = None
+            st.session_state.filename = None
+            reset_document_viewer()
+            return
+
+        active_ids = {
+            item.get("document_id")
+            for item in documents
+            if isinstance(item, dict)
+        }
+
+        if st.session_state.document_id not in active_ids:
+            selected = documents[-1]
+            st.session_state.document_id = selected.get("document_id")
+
+        selected = next(
+            (
+                item
+                for item in documents
+                if item.get("document_id") == st.session_state.document_id
+            ),
+            documents[-1],
+        )
+
+        st.session_state.document_id = selected.get("document_id")
+        st.session_state.filename = selected.get("filename")
+        st.session_state.total_pages = selected.get("total_pages", 0)
+        st.session_state.total_chunks = selected.get("total_chunks", 0)
+
+        if (
+            st.session_state.filename
+            and st.session_state.filename.lower().endswith(".pdf")
+            and not st.session_state.pdf_bytes
+        ):
+            st.session_state.pdf_bytes = fetch_selected_document_bytes(
+                st.session_state.document_id
+            )
+
+    except requests.exceptions.RequestException:
+        st.session_state.documents = []
+        st.session_state.documents_needs_refresh = False
+
+
+def delete_document(document_id: str):
+    try:
+        response = requests.delete(
+            f"{BACKEND_URL}/api/documents/{document_id}",
+            timeout=30,
+        )
+        response.raise_for_status()
+
+        if st.session_state.document_id == document_id:
+            st.session_state.document_id = None
+            st.session_state.filename = None
+            reset_document_viewer()
+
+        st.session_state.documents_needs_refresh = True
+        refresh_documents()
+        st.rerun()
+
+    except requests.exceptions.RequestException as error:
+        st.error(f"Document removal failed: {error}")
+
+
+def clear_all_documents():
+    try:
+        response = requests.delete(
+            f"{BACKEND_URL}/api/documents",
+            timeout=30,
+        )
+        response.raise_for_status()
+
+        st.session_state.document_id = None
+        st.session_state.filename = None
+        st.session_state.documents = []
+        st.session_state.processed_file_fingerprints = set()
+        st.session_state.upload_statuses = []
+        reset_document_viewer()
+
+        st.session_state.documents_needs_refresh = True
+        refresh_documents()
+        st.rerun()
+
+    except requests.exceptions.RequestException as error:
+        st.error(f"Workspace clear failed: {error}")
+
+
+def activate_document(document: dict):
+    document_id = document.get("document_id")
+    filename = document.get("filename", "Document")
+    st.session_state.document_id = document_id
+    st.session_state.filename = filename
+    st.session_state.total_pages = document.get("total_pages", 0)
+    st.session_state.total_chunks = document.get("total_chunks", 0)
+    reset_document_viewer()
+
+    if filename.lower().endswith(".pdf"):
+        st.session_state.pdf_bytes = fetch_selected_document_bytes(document_id)
+
+
+# ============================================================================
+# CONVERSATION API
+# ============================================================================
+
+def load_conversations():
+    try:
+        response = requests.get(
+            f"{BACKEND_URL}/api/conversations",
+            timeout=30,
+        )
+        response.raise_for_status()
+        conversations = response.json() or []
+        st.session_state.conversations = conversations
+        return conversations
+    except requests.exceptions.RequestException:
+        st.session_state.conversations = []
+        return []
+
+
+def create_conversation_record(title: str = "New chat"):
+    document_ids = [
+        item.get("document_id")
+        for item in st.session_state.documents
+        if isinstance(item, dict) and item.get("document_id")
+    ]
+
+    payload = {
+        "title": title,
+        "document_ids": document_ids,
+    }
+
+    try:
+        response = requests.post(
+            f"{BACKEND_URL}/api/conversations",
+            json=payload,
+            timeout=30,
+        )
+        response.raise_for_status()
+
+        data = response.json()
+
+        st.session_state.conversation_id = data.get("conversation_id")
+        st.session_state.conversation_title = data.get("title", title)
+        st.session_state.messages = data.get("messages", [])
+
+        clear_highlight()
+        load_conversations()
+        return data
+
+    except requests.exceptions.RequestException as error:
+        st.error(f"Could not create conversation: {error}")
+        return None
+
+
+def start_new_chat():
+    active = st.session_state.get("conversation_id")
+    if active:
+        current = next(
+            (
+                conv
+                for conv in st.session_state.conversations
+                if conv.get("conversation_id") == active
+            ),
+            None,
+        )
+        # Reuse an existing empty chat instead of creating duplicates
+        # across Streamlit reruns.
+        if current and not current.get("messages"):
+            st.session_state.messages = []
+            st.session_state.conversation_title = (
+                current.get("title") or "New chat"
+            )
+            clear_highlight()
+            return
+
+    create_conversation_record(title="New chat")
+    clear_highlight()
+
+
+def open_conversation(conversation_id: str):
+    try:
+        response = requests.get(
+            f"{BACKEND_URL}/api/conversations/{conversation_id}",
+            timeout=30,
+        )
+        response.raise_for_status()
+
+        data = response.json()
+
+        st.session_state.conversation_id = conversation_id
+        st.session_state.conversation_title = data.get("title", "New chat")
+        st.session_state.messages = data.get("messages", [])
+        clear_highlight()
+
+        document_ids = data.get("document_ids") or []
+
+        if document_ids:
+            selected_id = document_ids[0]
+            selected_document = next(
+                (
+                    item
+                    for item in st.session_state.documents
+                    if item.get("document_id") == selected_id
+                ),
+                None,
+            )
+
+            if selected_document:
+                activate_document(selected_document)
+
+        return data
+
+    except requests.exceptions.RequestException as error:
+        st.error(f"Could not open conversation: {error}")
+        return None
+
+
+def save_current_conversation():
+    conversation_id = st.session_state.get("conversation_id")
+
+    if not conversation_id:
+        return None
+
+    document_ids = [
+        item.get("document_id")
+        for item in st.session_state.documents
+        if isinstance(item, dict) and item.get("document_id")
+    ]
+
+    if (
+        st.session_state.document_id
+        and st.session_state.document_id not in document_ids
+    ):
+        document_ids.insert(0, st.session_state.document_id)
+
+    payload = {
+        "title": st.session_state.get("conversation_title", "New chat"),
+        "messages": st.session_state.get("messages", []),
+        "document_ids": document_ids,
+    }
+
+    try:
+        response = requests.patch(
+            f"{BACKEND_URL}/api/conversations/{conversation_id}",
+            json=payload,
+            timeout=30,
+        )
+        response.raise_for_status()
+        load_conversations()
+        return response.json()
+
+    except requests.exceptions.RequestException:
+        return None
+
+
+def delete_conversation(conversation_id: str):
+    try:
+        response = requests.delete(
+            f"{BACKEND_URL}/api/conversations/{conversation_id}",
+            timeout=30,
+        )
+        response.raise_for_status()
+
+        input_key = f"rename_input_{conversation_id}"
+        if input_key in st.session_state:
+            del st.session_state[input_key]
+
+        if st.session_state.conversation_id == conversation_id:
+            st.session_state.conversation_id = None
+            st.session_state.conversation_title = "New chat"
+            st.session_state.messages = []
+            clear_highlight()
+
+        load_conversations()
+        st.rerun()
+
+    except requests.exceptions.RequestException as error:
+        st.error(f"Conversation delete failed: {error}")
+
+
+def rename_conversation(conversation_id: str, title: str):
+    try:
+        response = requests.patch(
+            f"{BACKEND_URL}/api/conversations/{conversation_id}",
+            json={"title": title},
+            timeout=30,
+        )
+        response.raise_for_status()
+
+        input_key = f"rename_input_{conversation_id}"
+        if input_key in st.session_state:
+            del st.session_state[input_key]
+
+        if st.session_state.conversation_id == conversation_id:
+            st.session_state.conversation_title = title
+
+        load_conversations()
+        st.rerun()
+
+    except requests.exceptions.RequestException as error:
+        st.error(f"Rename failed: {error}")
+
+
+# ============================================================================
+# PDF SECTION HIGHLIGHTING (BLOCK BASED)
+# ============================================================================
+
+SECTION_PADDING = 4.0
+MIN_ANCHOR_WORDS = 4
+MAX_SECTION_BLOCKS = 8
+CONFIDENCE_MIN = 0.30
+HEADING_LINK_GAP = 45.0
+PARAGRAPH_CONTINUATION_GAP = 22.0
+PARAGRAPH_REL_GAP = 1.3
+
+_MAJOR_HEADING_RE = re.compile(r"^\d+(\.\d+)*[.`:]\s+\S")
+_CHILD_HEADING_RE = re.compile(r"^\d+\.\d+[.`:]*\s+\S")
+_QUESTION_HEADING_RE = re.compile(
+    r"^(?:q[-.\s]?\d+|question)\b", re.IGNORECASE
+)
+_CODE_FONT_RE = re.compile(
+    r"(?i)(mono|courier|consolas|code|fira|menlo|inconsolata|"
+    r"sourcecode|jetbrains|dejavu)"
+)
+
+_BULLET_CHARS = "\u25cf\u2022\uf0b7\ufffd\u2219\u25e6\u2023\u2043\u00b7•·►▪*"
+_PUNCT_TO_STRIP = ".,;:!?()[]{}<>|\\/\"'`“”‘’…"
+
+
+def normalize_block_text(text: str) -> str:
+    """
+    Normalizes a block or the source passage for reliable matching:
+
+    - Collapses line breaks and runs of spaces into single spaces.
+    - Removes soft-hyphens and normalizes dash variants.
+    - Treats hyphens as space-separated so "multi-agent" and
+      "multi-\nagent" (broken across a PDF line) both normalize
+      to the same token sequence.
+    - Strips bullet markers and punctuation attached to word
+      edges (so "step," and "step" both become "step").
+    """
     if not text:
         return ""
 
-    return " ".join(str(text).split()).strip()
+    value = str(text)
+    value = value.replace("\r\n", " ").replace("\r", " ").replace("\n", " ")
+    value = value.replace("\u00ad", "")
+    value = value.replace("\u2010", " ")
+    value = value.replace("\u2013", " ")
+    value = value.replace("\u2014", " ")
+    for marker in _BULLET_CHARS:
+        value = value.replace(marker, " ")
+    value = value.replace("-", " ")
+    value = " ".join(value.split())
+    value = " ".join(
+        token.strip(_PUNCT_TO_STRIP)
+        for token in value.split()
+        if token.strip(_PUNCT_TO_STRIP)
+    )
+    value = value.strip(_PUNCT_TO_STRIP)
+    return value.lower()
 
 
-def clean_word_text(text: str) -> str:
-    if not text:
-        return ""
+def _is_title_case_line(text: str) -> bool:
+    """
+    True for short Title Case / ALL CAPS heading lines such as
+    "Memory Management in OS" or "MEMORY MANAGEMENT".
+    Sentence-fragment continuation lines ("Edges define which node
+    executes next") are rejected because only their first word is
+    capitalized.
+    """
+    compact = " ".join(str(text or "").split())
+    words = compact.split()
+    if not (1 <= len(words) <= 10):
+        return False
+    alpha = [w for w in words if any(c.isalpha() for c in w)]
+    if not alpha:
+        return False
+    capitalized = sum(1 for w in alpha if w[0] and w[0].isupper())
+    if capitalized / len(alpha) < 0.5:
+        return False
+    if compact[0] and not compact[0].isupper():
+        return False
+    return len(compact) <= 70
 
-    text = str(text).strip()
 
-    bullet_pattern = re.compile(
-        r"^[\u25cf\u2022\uf0b7\ufffd\u2219\u25e6\u2023\u2043\u00b7\s]+$"
+def is_child_heading(text: str) -> bool:
+    """
+    True for numbered sub-section headings such as "10.1 Installation",
+    "10.2 Minimal Graph" or "11.1 Sequential Research and Review
+    Workflow".
+    """
+    compact = " ".join(str(text or "").split())
+    if not compact:
+        return False
+    return bool(_CHILD_HEADING_RE.match(compact))
+
+
+def is_heading(text: str) -> bool:
+    """
+    True when the block text is a section heading:
+    - numbered major headings ("10. LangGraph Fundamentals")
+    - numbered child headings ("10.1 Installation")
+    - question headings ("Q1 ...", "Question 2 ...")
+    - short colon lead-ins ("The functions are:")
+    - Title Case / ALL CAPS heading lines
+
+    Bullet points and mid-sentence continuation lines are deliberately
+    rejected.
+    """
+    compact = " ".join(str(text or "").split())
+    if not compact:
+        return False
+    if is_child_heading(compact):
+        return True
+    if compact[0] in _BULLET_CHARS:
+        return False
+    if _MAJOR_HEADING_RE.match(compact):
+        return True
+    if _QUESTION_HEADING_RE.match(compact):
+        return True
+    if 2 <= len(compact) <= 90 and compact.endswith(":"):
+        return True
+    return _is_title_case_line(compact)
+
+
+def _is_code_block(raw_text: str) -> bool:
+    """
+    Textual heuristics used to detect code blocks when the font
+    information is inconclusive.
+    """
+    text = str(raw_text or "")
+    if re.search(
+        r"(?m)^\s*(def|class|import|from|return|print|"
+        r"if __name__|public (static )?|private |const |let |var |"
+        r"function |async |await )\b",
+        text,
+    ):
+        return True
+    if re.search(r"(?m)^\s*(>>>|\.\.\.)\s", text):
+        return True
+    stripped = "\n".join(
+        line.strip() for line in text.splitlines() if line.strip()
+    )
+    if ";" in stripped and "{" in stripped:
+        return True
+    return False
+
+
+def _extract_text_blocks(page) -> list[dict]:
+    """
+    Returns a list of text blocks from the page, sorted top-to-bottom,
+    left-to-right, each with 'rect', 'raw', 'norm' and 'is_code' keys.
+
+    Uses ``page.get_text("dict")`` so code blocks can be detected from
+    monospace fonts in addition to text heuristics.
+    """
+    try:
+        page_dict = page.get_text("dict")
+    except Exception:
+        return []
+
+    blocks = []
+    for block in page_dict.get("blocks", []):
+        if block.get("type") != 0:
+            continue
+        lines = block.get("lines") or []
+        raw_lines = []
+        x0 = y0 = float("inf")
+        x1 = y1 = float("-inf")
+        code_chars = 0
+        total_chars = 0
+
+        for line in lines:
+            parts = []
+            for span in line.get("spans") or []:
+                span_text = span.get("text") or ""
+                if not span_text:
+                    continue
+                parts.append(span_text)
+                total_chars += len(span_text)
+                if _CODE_FONT_RE.search(span.get("font") or ""):
+                    code_chars += len(span_text)
+                bbox = span.get("bbox")
+                if bbox and len(bbox) >= 4:
+                    x0 = min(x0, bbox[0])
+                    y0 = min(y0, bbox[1])
+                    x1 = max(x1, bbox[2])
+                    y1 = max(y1, bbox[3])
+            if parts:
+                raw_lines.append("".join(parts))
+
+        raw = "\n".join(raw_lines).strip()
+        if not raw or total_chars == 0 or x0 > x1:
+            continue
+
+        norm = normalize_block_text(raw)
+        if not norm:
+            continue
+
+        is_code = (code_chars / total_chars) >= 0.6 or _is_code_block(raw)
+
+        blocks.append({
+            "rect": fitz.Rect(x0, y0, x1, y1),
+            "raw": raw,
+            "norm": norm,
+            "is_code": is_code,
+        })
+
+    blocks.sort(
+        key=lambda blk: (round(blk["rect"].y0, 1),
+                         round(blk["rect"].x0, 1))
+    )
+    return blocks
+
+
+def _overlap_words(source_words: list[str],
+                   block_words: list[str]) -> int:
+    """
+    Number of source words that also occur in the block text
+    (bag overlap, order-independent).
+    """
+    remaining = _word_counts(source_words)
+    before = _remaining_count(remaining)
+    _consume_words(remaining, " ".join(block_words))
+    return before - _remaining_count(remaining)
+
+
+def _word_counts(words: list[str]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for word in words:
+        counts[word] = counts.get(word, 0) + 1
+    return counts
+
+
+def _consume_words(remaining: dict[str, int],
+                   block_norm: str) -> None:
+    for word in block_norm.split():
+        if remaining.get(word, 0) > 0:
+            remaining[word] -= 1
+
+
+def _remaining_count(remaining: dict[str, int]) -> int:
+    return sum(remaining.values())
+
+
+def _padded_rect(rect: fitz.Rect, pad: float) -> fitz.Rect:
+    return fitz.Rect(rect.x0 - pad, rect.y0 - pad,
+                     rect.x1 + pad, rect.y1 + pad)
+
+
+def find_best_matching_block(page, source_text):
+    """
+    Finds the block with the highest text overlap against the
+    normalized source_text and estimates a confidence score between
+    0.0 and 1.0 (min of block coverage and source coverage).
+
+    Returns (blocks, matched_index, confidence).  matched_index is -1
+    when no reliable match exists.
+    """
+    blocks = _extract_text_blocks(page)
+    source_norm = normalize_block_text(source_text)
+    source_words = source_norm.split() if source_norm else []
+
+    if not source_words:
+        return blocks, -1, 0.0
+
+    best_index = -1
+    best_score = -1.0
+    best_overlap = 0
+    best_block_ratio = 0.0
+    best_source_ratio = 0.0
+
+    for index, block in enumerate(blocks):
+        block_words = block["norm"].split()
+        if not block_words:
+            continue
+        overlap = _overlap_words(source_words, block_words)
+        if overlap <= 0:
+            continue
+
+        block_ratio = overlap / len(block_words)
+        source_ratio = overlap / len(source_words)
+        score = (block_ratio + source_ratio) / 2.0
+
+        if score > best_score or (score == best_score
+                                  and overlap > best_overlap):
+            best_index = index
+            best_score = score
+            best_overlap = overlap
+            best_block_ratio = block_ratio
+            best_source_ratio = source_ratio
+
+    if best_index < 0:
+        return blocks, -1, 0.0
+
+    confidence = min(best_block_ratio, best_source_ratio)
+    matched_is_heading = is_heading(blocks[best_index]["raw"])
+
+    if matched_is_heading:
+        reliable = best_overlap >= 2 and best_block_ratio >= 0.6
+    else:
+        reliable = (best_overlap >= MIN_ANCHOR_WORDS
+                    and confidence >= CONFIDENCE_MIN)
+
+    if not reliable:
+        return blocks, -1, confidence
+
+    return blocks, best_index, confidence
+
+
+def get_related_heading(blocks, matched_index):
+    """
+    Returns the index of the heading block immediately above the
+    matched paragraph, or None when there is no directly connected
+    heading.
+
+    Only the single previous block is considered: a parent section
+    heading is NOT included when a child heading sits in between.
+    """
+    if matched_index is None or matched_index <= 0:
+        return None
+
+    previous = blocks[matched_index - 1]
+    if previous.get("is_code"):
+        return None
+    if not is_heading(previous["raw"]):
+        return None
+
+    gap = blocks[matched_index]["rect"].y0 - previous["rect"].y1
+    if gap < -2 or gap > HEADING_LINK_GAP:
+        return None
+    return matched_index - 1
+
+
+def find_source_rectangles(page,
+                           source_text: str) -> list[fitz.Rect]:
+    """
+    Strict section-level highlight matcher.
+
+    1.  Finds the block with the highest text overlap against the
+        source (find_best_matching_block).
+    2.  When the matched block is a paragraph, returns its rectangle
+        together with the heading directly above it (if any), plus any
+        directly connected continuation blocks of the same paragraph
+        that still contain source words.
+    3.  When the matched block is a heading, returns the heading and
+        the directly following paragraph only.
+
+    Returns [] when no reliable match exists; it never falls back to
+    whole-page or whole-section highlighting.
+    """
+    LOGGER.debug("find_source_rectangles start")
+    if not source_text or page is None:
+        return []
+
+    blocks, matched_index, confidence = find_best_matching_block(
+        page, source_text
     )
 
-    if bullet_pattern.fullmatch(text):
-        return ""
-
-    return text
-
-
-# ============================================================
-# PDF TEXT MATCHING
-# ============================================================
-
-def get_pdf_words(page):
-    words = page.get_text("words")
-
-    if not words:
+    if matched_index < 0:
+        LOGGER.debug("no reliable matching block "
+                     "(confidence_score=%.2f)", confidence)
+        LOGGER.debug("selected_block_indices: []")
+        LOGGER.debug("selected_rectangle_count: 0")
         return []
 
-    result = []
+    matched = blocks[matched_index]
+    selected = [matched_index]
 
-    for word in words:
-        if len(word) < 5:
-            continue
+    LOGGER.debug("matched_block_index: %d", matched_index)
+    LOGGER.debug("matched_block_text: %r", matched["raw"].strip())
+    LOGGER.debug("confidence_score: %.2f", confidence)
 
-        x0, y0, x1, y1, text = word[:5]
-        text = clean_word_text(text)
+    if is_heading(matched["raw"]):
+        # Rule: heading + the directly following paragraph only.
+        LOGGER.debug("matched block is a heading; adding the "
+                     "directly following paragraph")
+        if matched_index + 1 < len(blocks):
+            following = blocks[matched_index + 1]
+            gap = following["rect"].y0 - matched["rect"].y1
+            if (not is_heading(following["raw"])
+                    and not following.get("is_code")
+                    and -2 <= gap <= HEADING_LINK_GAP):
+                selected.append(matched_index + 1)
+        LOGGER.debug("matched_heading: %r", matched["raw"].strip())
+    else:
+        related_heading = get_related_heading(blocks, matched_index)
+        if related_heading is not None:
+            selected.append(related_heading)
+            LOGGER.debug("matched_heading: %r",
+                         blocks[related_heading]["raw"].strip())
+        else:
+            LOGGER.debug("matched_heading: None")
 
-        if not text:
-            continue
+        # Directly connected continuation blocks that belong to the same
+        # paragraph and still contain source words.
+        source_norm = normalize_block_text(source_text)
+        remaining = _word_counts(source_norm.split())
+        _consume_words(remaining, matched["norm"])
+        previous_rect = matched["rect"]
 
-        result.append(
-            {
-                "x0": x0,
-                "y0": y0,
-                "x1": x1,
-                "y1": y1,
-                "text": text,
-            }
-        )
+        for index in range(matched_index + 1, len(blocks)):
+            if len(selected) >= MAX_SECTION_BLOCKS:
+                break
+            candidate = blocks[index]
+            if is_heading(candidate["raw"]) or candidate.get("is_code"):
+                LOGGER.debug("paragraph ends before block %d "
+                             "(heading or code)", index)
+                break
+            if (candidate["raw"].lstrip()
+                    and candidate["raw"].lstrip()[0] in _BULLET_CHARS):
+                LOGGER.debug("paragraph ends before block %d "
+                             "(new bullet point)", index)
+                break
+            gap = candidate["rect"].y0 - previous_rect.y1
+            height = previous_rect.y1 - previous_rect.y0
+            max_gap = max(PARAGRAPH_CONTINUATION_GAP,
+                          PARAGRAPH_REL_GAP * max(height, 8.0))
+            if gap < -2 or gap > max_gap:
+                LOGGER.debug("paragraph ends before block %d "
+                             "(unrelated block)", index)
+                break
+            before = _remaining_count(remaining)
+            _consume_words(remaining, candidate["norm"])
+            added = before - _remaining_count(remaining)
+            if added <= 0:
+                LOGGER.debug("paragraph ends before block %d "
+                             "(no source words added)", index)
+                break
+            selected.append(index)
+            previous_rect = candidate["rect"]
 
-    return result
+    selected.sort()
 
+    rectangles = [_padded_rect(blocks[index]["rect"], SECTION_PADDING)
+                  for index in selected]
 
-def find_paragraph_rectangles(page, source_text: str):
-    """
-    Source text jis PDF text block ke andar milta hai,
-    us complete paragraph/text block ko highlight karta hai.
-    """
-
-    if not source_text:
-        return []
-
-    normalized_source = normalize_text(source_text).lower()
-
-    if len(normalized_source) < 10:
-        return []
-
-    blocks = page.get_text("blocks")
-
-    if not blocks:
-        return []
-
-    for block in blocks:
-        if len(block) < 5:
-            continue
-
-        x0, y0, x1, y1, block_text = block[:5]
-
-        if not block_text:
-            continue
-
-        normalized_block = normalize_text(block_text).lower()
-
-        if normalized_source in normalized_block:
-            return [
-                fitz.Rect(
-                    x0 - 3,
-                    y0 - 3,
-                    x1 + 3,
-                    y1 + 3,
-                )
-            ]
-
-    source_words = normalized_source.split()
-
-    for phrase_length in [20, 16, 12, 10, 8, 6]:
-        if len(source_words) < phrase_length:
-            continue
-
-        phrase = " ".join(source_words[:phrase_length])
-
-        if len(phrase) < 25:
-            continue
-
-        for block in blocks:
-            if len(block) < 5:
-                continue
-
-            x0, y0, x1, y1, block_text = block[:5]
-
-            if not block_text:
-                continue
-
-            normalized_block = normalize_text(block_text).lower()
-
-            if phrase in normalized_block:
-                return [
-                    fitz.Rect(
-                        x0 - 3,
-                        y0 - 3,
-                        x1 + 3,
-                        y1 + 3,
-                    )
-                ]
-
-    return []
-
-
-def find_word_rectangles(page, source_text: str):
-    normalized_source = normalize_text(source_text).lower()
-
-    if len(normalized_source) < 10:
-        return []
-
-    words = get_pdf_words(page)
-
-    if not words:
-        return []
-
-    joined_text = " ".join(
-        word["text"]
-        for word in words
-    ).lower()
-
-    start_index = joined_text.find(normalized_source)
-
-    if start_index == -1:
-        return []
-
-    end_index = start_index + len(normalized_source)
-
-    boundaries = []
-    cursor = 0
-
-    for word in words:
-        word_text = word["text"]
-
-        word_start = cursor
-        word_end = cursor + len(word_text)
-
-        boundaries.append(
-            (
-                word_start,
-                word_end,
-                word,
-            )
-        )
-
-        cursor = word_end + 1
-
-    rectangles = []
-
-    for word_start, word_end, word in boundaries:
-        if word_end <= start_index:
-            continue
-
-        if word_start >= end_index:
-            continue
-
-        rectangles.append(
-            fitz.Rect(
-                word["x0"],
-                word["y0"],
-                word["x1"],
-                word["y1"],
-            )
-        )
+    LOGGER.debug("selected_block_indices: %s", selected)
+    LOGGER.debug("selected_rectangle_count: %d", len(rectangles))
+    LOGGER.debug("find_source_rectangles done")
 
     return rectangles
 
 
-def find_partial_rectangles(page, source_text: str):
-    normalized_source = normalize_text(source_text)
-
-    if not normalized_source:
-        return []
-
-    words = normalized_source.split()
-
-    if len(words) < 5:
-        return []
-
-    for phrase_length in [18, 14, 12, 10, 8, 6]:
-        phrase = " ".join(words[:phrase_length])
-
-        if len(phrase) < 20:
-            continue
-
-        rectangles = page.search_for(
-            phrase,
-            quads=False,
-        )
-
-        if rectangles:
-            return rectangles
-
-    return []
-
-
-def find_source_rectangles(page, source_text: str):
-    if not source_text:
-        return []
-
-    rectangles = find_paragraph_rectangles(
-        page=page,
-        source_text=source_text,
-    )
-
-    if rectangles:
-        return rectangles
-
-    rectangles = find_word_rectangles(
-        page=page,
-        source_text=source_text,
-    )
-
-    if rectangles:
-        return rectangles
-
-    return find_partial_rectangles(
-        page=page,
-        source_text=source_text,
-    )
-
-
-# ============================================================
+# ============================================================================
 # PDF RENDERING
-# ============================================================
+# ============================================================================
 
 def render_pdf_page(
     pdf_bytes: bytes,
     page_number: int,
     highlight_text: str = "",
 ):
+    """
+    Renders a PDF page as PNG and applies the highlight when a reliable
+    match is found.  Returns (image_bytes, highlight_applied).
+    """
     if not pdf_bytes:
-        return None
+        return None, False
 
-    pdf_document = fitz.open(
-        stream=pdf_bytes,
-        filetype="pdf",
-    )
+    pdf_document = fitz.open(stream=pdf_bytes, filetype="pdf")
 
     try:
         total_pages = len(pdf_document)
 
         if total_pages == 0:
-            return None
+            return None, False
 
         page_number = max(
             1,
@@ -574,81 +1208,75 @@ def render_pdf_page(
 
         page = pdf_document[page_number - 1]
 
+        highlight_applied = False
+
         if highlight_text:
-            rectangles = find_source_rectangles(
-                page=page,
-                source_text=highlight_text,
-            )
+            rectangles = find_source_rectangles(page, highlight_text)
 
             for rectangle in rectangles:
                 page.draw_rect(
                     rectangle,
-                    color=(0.1, 0.55, 1.0),
-                    fill=(0.2, 0.65, 1.0),
+                    color=(0.2, 0.7, 1.0),
+                    fill=(0.25, 0.65, 1.0),
                     width=1,
-                    fill_opacity=0.28,
+                    fill_opacity=0.3,
                     overlay=True,
                 )
 
-        zoom = 1.45
-        matrix = fitz.Matrix(zoom, zoom)
+            highlight_applied = bool(rectangles)
 
+        matrix = fitz.Matrix(1.45, 1.45)
         pixmap = page.get_pixmap(
             matrix=matrix,
             alpha=False,
         )
 
-        return pixmap.tobytes("png")
+        return pixmap.tobytes("png"), highlight_applied
 
     finally:
         pdf_document.close()
 
 
-# ============================================================
-# SOURCE NAVIGATION
-# ============================================================
+# ============================================================================
+# SOURCES
+# ============================================================================
 
-def open_source(source: dict):
-    page_number = source.get("page")
+def open_source(source: dict, source_key: str):
+    page = source.get("page")
 
-    if page_number is None:
-        page_number = source.get("page_number")
+    if page is None:
+        page = source.get("page_number")
 
-    if page_number is None:
-        return
+    # Clear the previous highlight first.
+    clear_highlight()
 
-    try:
-        page_number = int(page_number)
-    except (TypeError, ValueError):
-        return
+    if page is not None:
+        try:
+            page = int(page)
+        except (TypeError, ValueError):
+            page = None
 
-    st.session_state.pending_page = page_number
+    if page is not None:
+        st.session_state.pending_page = page
 
-    st.session_state.highlight_text = (
+    exact = (
         source.get("exact_text")
         or source.get("text")
         or source.get("preview")
         or ""
     )
 
+    if exact:
+        st.session_state.highlight_text = exact
+        st.session_state.active_source_key = source_key
 
-def clear_highlight():
-    st.session_state.highlight_text = ""
 
-
-# ============================================================
-# SOURCE RENDERER
-# ============================================================
-
-def render_sources(
-    sources: list[dict],
-    message_id: int,
-):
+def render_sources(sources, message_id):
     if not sources:
         return
 
     st.markdown(
-        '<div class="source-label">📌 DOCUMENT SOURCES</div>',
+        '<div class="source-label">📌 Document sources</div>',
         unsafe_allow_html=True,
     )
 
@@ -661,129 +1289,362 @@ def render_sources(
         if page_number is None:
             continue
 
-        source_key = (
-            f"source_{message_id}_"
-            f"{source.get('chunk_id', source_index)}_"
-            f"{source_index}"
+        source_key = f"source_{message_id}_{source_index}"
+        is_active = (
+            st.session_state.get("active_source_key") == source_key
         )
 
+        button_type = "primary" if is_active else "secondary"
+
         if st.button(
-            f"Open source · Page {page_number}",
-            key=source_key,
+            f"📖 Open source · Page {page_number}",
+            key=f"open_{source_key}",
             use_container_width=True,
+            type=button_type,
+            help="Navigate to this page and highlight the exact source text",
         ):
-            open_source(source)
+            open_source(source, source_key)
             st.rerun()
 
-        preview = source.get("preview", "")
+        preview = (
+            source.get("preview")
+            or source.get("exact_text")
+            or source.get("text")
+            or ""
+        )
 
         if preview:
             st.markdown(
-                f'<div class="source-preview">{preview}</div>',
+                f'<div class="source-preview">{escape_html(preview)}</div>',
                 unsafe_allow_html=True,
             )
 
 
-# ============================================================
-# HEADER
-# ============================================================
+# ============================================================================
+# UPLOAD DOCUMENTS
+# ============================================================================
 
-st.markdown(
-    '<div class="brand-mark">📘</div>',
-    unsafe_allow_html=True,
-)
+def upload_documents(uploaded_files):
+    files_to_upload = []
 
-st.markdown(
-    '<div class="main-title">DocuMind AI</div>',
-    unsafe_allow_html=True,
-)
+    for uploaded_file in uploaded_files:
+        fingerprint = compute_file_fingerprint(uploaded_file)
 
-st.markdown(
-    '<div class="subtitle">Understand your documents with intelligent AI-powered conversations.</div>',
-    unsafe_allow_html=True,
-)
+        if fingerprint not in st.session_state.processed_file_fingerprints:
+            files_to_upload.append(uploaded_file)
 
+    if not files_to_upload:
+        st.info("These files are already uploaded.")
+        return
 
-# ============================================================
-# SIDEBAR
-# ============================================================
+    st.session_state.upload_statuses = [
+        {
+            "name": uploaded_file.name,
+            "status": "Pending",
+        }
+        for uploaded_file in files_to_upload
+    ]
 
-with st.sidebar:
-    st.markdown("## 📁 Workspace")
-    st.caption("Upload a document to start your AI session.")
+    uploaded_document_ids = []
 
-    uploaded_file = st.file_uploader(
-        "Choose PDF or DOCX",
-        type=["pdf", "docx"],
-        key=f"file_uploader_{st.session_state.upload_key}",
-    )
+    with st.spinner("Processing your documents..."):
+        for uploaded_file in files_to_upload:
+            try:
+                response = requests.post(
+                    f"{BACKEND_URL}/api/upload",
+                    files={
+                        "files": (
+                            uploaded_file.name,
+                            uploaded_file.getvalue(),
+                            uploaded_file.type,
+                        )
+                    },
+                    timeout=240,
+                )
 
-    if uploaded_file:
-        st.markdown(
-            f"**Selected file:** `{uploaded_file.name}`"
-        )
+                if response.status_code == 409:
+                    status = "Already uploaded"
+                    document_ids = []
 
-        if st.button(
-            "Upload and Process",
-            use_container_width=True,
-        ):
-            with st.spinner("Processing your document..."):
-                try:
-                    file_bytes = uploaded_file.getvalue()
-
-                    response = requests.post(
-                        f"{BACKEND_URL}/api/upload",
-                        files={
-                            "file": (
-                                uploaded_file.name,
-                                file_bytes,
-                                uploaded_file.type,
-                            )
-                        },
-                        timeout=180,
-                    )
-
+                else:
                     response.raise_for_status()
                     data = response.json()
+                    document_ids = []
 
-                    st.session_state.document_id = data.get(
-                        "document_id"
-                    )
+                    if isinstance(data, dict) and "documents" in data:
+                        for item in data["documents"]:
+                            document_id = item.get("document_id")
+                            if document_id:
+                                document_ids.append(document_id)
 
-                    st.session_state.filename = data.get(
-                        "filename",
-                        uploaded_file.name,
-                    )
+                    elif isinstance(data, dict):
+                        document_id = data.get("document_id")
+                        if document_id:
+                            document_ids.append(document_id)
 
-                    st.session_state.messages = []
-                    st.session_state.current_page = 1
-                    st.session_state.page_input = 1
-                    st.session_state.pending_page = None
-                    st.session_state.highlight_text = ""
+                    status = "Uploaded"
 
-                    st.session_state.total_pages = data.get(
-                        "total_pages",
-                        0,
-                    )
+                uploaded_document_ids.extend(document_ids)
 
-                    st.session_state.total_chunks = data.get(
-                        "total_chunks",
-                        0,
-                    )
+                fingerprint = compute_file_fingerprint(uploaded_file)
+                st.session_state.processed_file_fingerprints.add(fingerprint)
 
-                    if uploaded_file.name.lower().endswith(".pdf"):
-                        st.session_state.pdf_bytes = file_bytes
-                    else:
-                        st.session_state.pdf_bytes = None
+                for item in st.session_state.upload_statuses:
+                    if item["name"] == uploaded_file.name:
+                        item["status"] = status
 
-                    st.success("Document processed successfully.")
+            except requests.exceptions.RequestException as error:
+                for item in st.session_state.upload_statuses:
+                    if item["name"] == uploaded_file.name:
+                        item["status"] = "Failed"
+
+                st.error(
+                    f"Upload failed for {uploaded_file.name}: {error}"
+                )
+
+    if uploaded_document_ids:
+        st.session_state.document_id = uploaded_document_ids[-1]
+        st.session_state.filename = files_to_upload[-1].name
+        st.session_state.messages = []
+        reset_document_viewer()
+        st.session_state.documents_needs_refresh = True
+
+    refresh_documents()
+    load_conversations()
+
+    if uploaded_document_ids:
+        start_new_chat()
+
+    st.success("Document processing completed.")
+    st.rerun()
+
+
+# ============================================================================
+# LOAD DATA ON STARTUP
+# ============================================================================
+
+if st.session_state.documents_needs_refresh:
+    refresh_documents()
+
+load_conversations()
+
+
+# ============================================================================
+# HEADER
+# ============================================================================
+
+st.markdown(
+    """
+    <div class="brand-chip">📘</div>
+    <div class="main-title">DocuMind AI</div>
+    <div class="subtitle">
+        Understand your documents with intelligent AI-powered conversations.
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
+
+
+# ============================================================================
+# SIDEBAR
+# ============================================================================
+
+with st.sidebar:
+    st.markdown(
+        """
+        <div class="sidebar-brand">
+            <div class="sidebar-brand-icon">📘</div>
+            <div>DocuMind AI</div>
+        </div>
+        <div class="sidebar-caption">
+            Your intelligent document workspace.
+            Upload files and chat with your knowledge base.
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    if st.button(
+        "＋ New chat",
+        use_container_width=True,
+    ):
+        start_new_chat()
+        st.rerun()
+
+    st.markdown(
+        '<div class="sidebar-section">Chats</div>',
+        unsafe_allow_html=True,
+    )
+
+    if st.session_state.conversations:
+        with st.container(height=300):
+            for conversation in st.session_state.conversations:
+                conversation_id = conversation.get("conversation_id")
+
+                if not conversation_id:
+                    continue
+
+                title = conversation.get("title") or "New chat"
+                display_title = truncate_display(title, 34)
+                is_active = (
+                    conversation_id == st.session_state.conversation_id
+                )
+
+                chat_col, menu_col = st.columns([5, 1])
+
+                with chat_col:
+                    if st.button(
+                        display_title,
+                        key=f"chat_{conversation_id}",
+                        use_container_width=True,
+                        type="primary" if is_active else "secondary",
+                        help=title,
+                    ):
+                        open_conversation(conversation_id)
+                        clear_highlight()
+                        st.rerun()
+
+                with menu_col:
+                    with st.popover("⋯"):
+                        st.caption("Chat options")
+
+                        new_title = st.text_input(
+                            "Rename chat",
+                            key=f"rename_input_{conversation_id}",
+                            value=title,
+                        )
+
+                        if st.button(
+                            "Rename",
+                            key=f"rename_button_{conversation_id}",
+                            use_container_width=True,
+                        ):
+                            if new_title.strip():
+                                rename_conversation(
+                                    conversation_id,
+                                    new_title.strip(),
+                                )
+
+                        if st.button(
+                            "Delete chat",
+                            key=f"delete_button_{conversation_id}",
+                            use_container_width=True,
+                        ):
+                            delete_conversation(conversation_id)
+    else:
+        st.caption("No chats yet. Start a new conversation.")
+
+    st.markdown(
+        '<div class="sidebar-section">Documents</div>',
+        unsafe_allow_html=True,
+    )
+
+    upload_key = f"file_uploader_{st.session_state.upload_key}"
+
+    uploaded_files = st.file_uploader(
+        "Choose PDF or DOCX",
+        type=["pdf", "docx"],
+        accept_multiple_files=True,
+        key=upload_key,
+    )
+
+    if uploaded_files:
+        if st.button(
+            "Upload and process",
+            use_container_width=True,
+        ):
+            upload_documents(uploaded_files)
+
+    if st.session_state.upload_statuses:
+        st.markdown(
+            '<div class="sidebar-section">Upload status</div>',
+            unsafe_allow_html=True,
+        )
+
+        for item in st.session_state.upload_statuses:
+            status = item.get("status", "Pending")
+
+            status_color = {
+                "Uploaded": "#86efac",
+                "Already uploaded": "#facc15",
+                "Failed": "#fca5a5",
+                "Pending": "#cbd5e1",
+            }.get(status, "#cbd5e1")
+
+            st.markdown(
+                f"""
+                <div style="
+                    padding:8px 10px;
+                    border-left:3px solid {status_color};
+                    border-radius:7px;
+                    background:rgba(15,23,42,0.55);
+                    margin-bottom:7px;
+                    font-size:11px;
+                ">
+                    {escape_html(item.get("name", "Unknown file"))}
+                    <br>
+                    <strong>{escape_html(status)}</strong>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+    if st.session_state.documents:
+        for document in st.session_state.documents:
+            document_id = document.get("document_id")
+
+            if not document_id:
+                continue
+
+            filename = document.get("filename", "Document")
+            is_active = document_id == st.session_state.document_id
+            card_class = "doc-card active" if is_active else "doc-card"
+
+            st.markdown(
+                f"""
+                <div class="{card_class}">
+                    <div class="doc-name">
+                        {escape_html(filename)}
+                    </div>
+                    <div class="doc-meta">
+                        {escape_html(document.get("file_type", "file")).upper()}
+                        · {document.get("total_pages", 0)} pages
+                    </div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+            document_col, remove_col = st.columns([1, 1])
+
+            with document_col:
+                if st.button(
+                    "Use",
+                    key=f"use_document_{document_id}",
+                    use_container_width=True,
+                ):
+                    activate_document(document)
                     st.rerun()
 
-                except requests.exceptions.RequestException as error:
-                    st.error(f"Upload failed: {error}")
+            with remove_col:
+                if st.button(
+                    "Remove",
+                    key=f"remove_document_{document_id}",
+                    use_container_width=True,
+                ):
+                    delete_document(document_id)
+
+        if st.button(
+            "Clear all documents",
+            use_container_width=True,
+        ):
+            clear_all_documents()
 
     if st.session_state.document_id:
-        st.divider()
+        st.markdown(
+            '<div class="sidebar-section">Workspace</div>',
+            unsafe_allow_html=True,
+        )
 
         st.markdown(
             """
@@ -826,29 +1687,27 @@ with st.sidebar:
             )
 
         if st.button(
-            "Clear Chat",
+            "Clear chat",
             use_container_width=True,
         ):
             st.session_state.messages = []
-            st.session_state.highlight_text = ""
+            clear_highlight()
             st.session_state.pending_page = None
+            save_current_conversation()
             st.rerun()
 
         if st.button(
-            "Reset Workspace",
+            "Reset workspace",
             use_container_width=True,
         ):
             st.session_state.document_id = None
             st.session_state.filename = None
-            st.session_state.pdf_bytes = None
-            st.session_state.messages = []
-            st.session_state.current_page = 1
-            st.session_state.page_input = 1
-            st.session_state.highlight_text = ""
-            st.session_state.pending_page = None
-            st.session_state.total_pages = 0
-            st.session_state.total_chunks = 0
+            st.session_state.documents = []
             st.session_state.upload_key += 1
+            st.session_state.upload_statuses = []
+            st.session_state.processed_file_fingerprints = set()
+            reset_document_viewer()
+            st.session_state.documents_needs_refresh = True
             st.rerun()
 
     st.divider()
@@ -857,9 +1716,9 @@ with st.sidebar:
     st.caption("Powered by Groq + FastAPI")
 
 
-# ============================================================
+# ============================================================================
 # MAIN LAYOUT
-# ============================================================
+# ============================================================================
 
 left_column, right_column = st.columns(
     [1.08, 0.92],
@@ -867,49 +1726,61 @@ left_column, right_column = st.columns(
 )
 
 
-# ============================================================
-# LEFT PANEL - DOCUMENT VIEWER
-# ============================================================
+# ============================================================================
+# DOCUMENT VIEWER
+# ============================================================================
 
 with left_column:
     st.markdown(
-        '<div class="section-title">📄 Document Viewer</div>',
+        '<div class="panel-title">📄 Document Viewer</div>',
         unsafe_allow_html=True,
     )
 
     st.markdown(
-        '<div class="section-subtitle">Read, navigate and inspect source references.</div>',
+        '<div class="panel-sub">Read, navigate and inspect source references.</div>',
         unsafe_allow_html=True,
     )
 
-    with st.container(
-        height=760,
-        border=True,
-    ):
+    with st.container(height=760, border=True):
         if st.session_state.pdf_bytes:
             pdf_document = fitz.open(
                 stream=st.session_state.pdf_bytes,
                 filetype="pdf",
             )
-
             total_pages = len(pdf_document)
             pdf_document.close()
 
             if st.session_state.pending_page is not None:
-                requested_page = st.session_state.pending_page
-
+                requested_page = int(st.session_state.pending_page)
                 requested_page = max(
                     1,
                     min(requested_page, total_pages),
                 )
-
                 st.session_state.current_page = requested_page
                 st.session_state.page_input = requested_page
                 st.session_state.pending_page = None
 
-            page_col, action_col = st.columns(
-                [1.2, 1],
+            current_page = max(
+                1,
+                min(
+                    st.session_state.current_page,
+                    total_pages,
+                ),
             )
+
+            nav_col, page_col, action_col = st.columns([1, 1.4, 1])
+
+            with nav_col:
+                st.write("")
+
+                if st.button(
+                    "◀ Prev",
+                    key="prev_page",
+                    use_container_width=True,
+                    disabled=current_page <= 1,
+                ):
+                    st.session_state.page_input = max(1, current_page - 1)
+                    st.rerun()
 
             with page_col:
                 selected_page = st.number_input(
@@ -919,23 +1790,33 @@ with left_column:
                     step=1,
                     key="page_input",
                 )
-
-                st.session_state.current_page = int(
-                    selected_page
-                )
+                st.session_state.current_page = int(selected_page)
 
             with action_col:
                 st.write("")
 
-                if st.session_state.highlight_text:
-                    if st.button(
-                        "Clear highlight",
-                        use_container_width=True,
-                    ):
-                        clear_highlight()
-                        st.rerun()
+                if st.button(
+                    "Next ▶",
+                    key="next_page",
+                    use_container_width=True,
+                    disabled=current_page >= total_pages,
+                ):
+                    st.session_state.page_input = min(
+                        total_pages,
+                        current_page + 1,
+                    )
+                    st.rerun()
 
-            page_image = render_pdf_page(
+            if st.session_state.highlight_text:
+                if st.button(
+                    "Clear highlight",
+                    key="clear_highlight_btn",
+                    use_container_width=True,
+                ):
+                    clear_highlight()
+                    st.rerun()
+
+            page_image, highlight_applied = render_pdf_page(
                 pdf_bytes=st.session_state.pdf_bytes,
                 page_number=st.session_state.current_page,
                 highlight_text=st.session_state.highlight_text,
@@ -948,10 +1829,16 @@ with left_column:
                 )
 
             if st.session_state.highlight_text:
-                st.caption(
-                    f"Source highlighted on page "
-                    f"{st.session_state.current_page}"
-                )
+                if highlight_applied:
+                    st.caption(
+                        f"✓ Source highlighted on page "
+                        f"{st.session_state.current_page}"
+                    )
+                else:
+                    st.caption(
+                        "The source section could not be located "
+                        "on this page."
+                    )
 
         elif st.session_state.filename:
             st.markdown(
@@ -984,25 +1871,22 @@ with left_column:
             )
 
 
-# ============================================================
-# RIGHT PANEL - AI CHAT
-# ============================================================
+# ============================================================================
+# AI CHAT
+# ============================================================================
 
 with right_column:
     st.markdown(
-        '<div class="section-title">🤖 AI Assistant</div>',
+        '<div class="panel-title">🤖 AI Assistant</div>',
         unsafe_allow_html=True,
     )
 
     st.markdown(
-        '<div class="section-subtitle">Ask questions, generate summaries and explore your document.</div>',
+        '<div class="panel-sub">Ask questions and explore your documents.</div>',
         unsafe_allow_html=True,
     )
 
-    with st.container(
-        height=760,
-        border=True,
-    ):
+    with st.container(height=760, border=True):
         if not st.session_state.document_id:
             st.markdown(
                 """
@@ -1011,7 +1895,7 @@ with right_column:
                     <div class="empty-title">Start a conversation</div>
                     <div class="empty-text">
                         Upload your document and ask anything about it.<br>
-                        Try: "Please give me the summary of this document."
+                        Try: "Give me a summary of this document."
                     </div>
                 </div>
                 """,
@@ -1019,105 +1903,154 @@ with right_column:
             )
 
         else:
-            for message in st.session_state.messages:
-                with st.chat_message(message["role"]):
-                    st.markdown(message["content"])
+            for message_index, message in enumerate(
+                st.session_state.messages
+            ):
+                role = message.get("role", "assistant")
+                content = message.get("content", "")
+
+                with st.chat_message(role):
+                    st.markdown(escape_html(content))
 
                     render_sources(
                         sources=message.get("sources", []),
-                        message_id=message["id"],
+                        message_id=message_index,
                     )
 
     question = st.chat_input(
         "Ask about your document...",
-        disabled=not bool(
-            st.session_state.document_id
-        ),
+        disabled=not bool(st.session_state.document_id),
     )
 
     if question:
-        user_message_id = len(
-            st.session_state.messages
-        )
+        question = question.strip()
+
+        if not question:
+            st.stop()
+
+        # ------------------------------------------------------------
+        # 1. Ensure a conversation exists (no duplicates on reruns).
+        # ------------------------------------------------------------
+        if not st.session_state.get("conversation_id"):
+            create_conversation_record(title=auto_title(question))
+        elif (
+            not st.session_state.get("conversation_title")
+            or st.session_state.conversation_title == "New chat"
+        ):
+            new_title = auto_title(question)
+            st.session_state.conversation_title = new_title
+
+            try:
+                requests.patch(
+                    f"{BACKEND_URL}/api/conversations/{st.session_state.conversation_id}",
+                    json={"title": new_title},
+                    timeout=30,
+                ).raise_for_status()
+            except requests.exceptions.RequestException:
+                pass
+
+            load_conversations()
+
+        # Clear any previous highlight from an earlier question.
+        clear_highlight()
+
+        # ------------------------------------------------------------
+        # 2. Store the user message.
+        # ------------------------------------------------------------
+        current_count = len(st.session_state.messages)
+        user_message_id = current_count + 1
 
         st.session_state.messages.append(
             {
                 "id": user_message_id,
                 "role": "user",
                 "content": question,
+                "sources": [],
             }
         )
 
+        save_current_conversation()
+
         with st.chat_message("user"):
-            st.markdown(question)
+            st.markdown(escape_html(question))
+
+        # ------------------------------------------------------------
+        # 3. Ask the backend and store the assistant message.
+        # ------------------------------------------------------------
+        assistant_message_id = current_count + 2
 
         with st.chat_message("assistant"):
             with st.spinner("Analyzing your document..."):
+                payload = {
+                    "question": question,
+                }
+
+                if st.session_state.document_id:
+                    payload["document_id"] = st.session_state.document_id
+
+                document_ids = [
+                    doc.get("document_id")
+                    for doc in st.session_state.documents
+                    if isinstance(doc, dict) and doc.get("document_id")
+                ]
+
+                if document_ids:
+                    payload["document_ids"] = document_ids
+
                 try:
                     response = requests.post(
                         f"{BACKEND_URL}/api/chat",
-                        json={
-                            "document_id": st.session_state.document_id,
-                            "question": question,
-                        },
+                        json=payload,
                         timeout=240,
                     )
-
                     response.raise_for_status()
+
                     data = response.json()
 
-                    answer = data.get(
-                        "answer",
-                        "No answer received.",
+                    answer = (
+                        data.get("answer")
+                        or data.get("response")
+                        or data.get("message")
+                        or ""
                     )
 
-                    sources = data.get(
-                        "sources",
-                        [],
-                    )
+                    sources = data.get("sources", [])
 
-                    st.markdown(answer)
+                    if not answer:
+                        raise RuntimeError(
+                            "Backend returned an empty answer."
+                        )
+
+                    st.markdown(escape_html(answer))
 
                     render_sources(
                         sources=sources,
-                        message_id=user_message_id + 1,
+                        message_id=assistant_message_id,
                     )
 
                     st.session_state.messages.append(
                         {
-                            "id": user_message_id + 1,
+                            "id": assistant_message_id,
                             "role": "assistant",
                             "content": answer,
                             "sources": sources,
                         }
                     )
 
-                except requests.exceptions.RequestException as error:
-                    error_message = f"Chat request failed: {error}"
-
-                    st.error(error_message)
-
-                    st.session_state.messages.append(
-                        {
-                            "id": user_message_id + 1,
-                            "role": "assistant",
-                            "content": error_message,
-                            "sources": [],
-                        }
-                    )
-
                 except Exception as error:
-                    error_message = f"Unexpected error: {error}"
+                    error_message = f"I couldn't get an answer: {error}"
 
-                    st.error(error_message)
+                    st.error(str(error))
 
                     st.session_state.messages.append(
                         {
-                            "id": user_message_id + 1,
+                            "id": assistant_message_id,
                             "role": "assistant",
                             "content": error_message,
                             "sources": [],
                         }
                     )
+
+                save_current_conversation()
 
         st.rerun()

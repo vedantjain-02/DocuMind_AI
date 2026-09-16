@@ -252,6 +252,7 @@ def _score_all_chunks(
             "overlap_score": round(overlap, 4),
             "relevance_score": round(combined, 4),
             "_informative_tokens": _informative_query_tokens(query_tokens, idf),
+            "_source_key": chunk.get("_source_key") or f"{chunk.get('document_id', 'doc')}:{chunk.get('chunk_id', index)}",
         }
         scored.append(chunk_with_scores)
 
@@ -338,9 +339,9 @@ def _gather_heading_context(
 
     page_chunks = sorted(
         [
-            scored_by_id[chunk["chunk_id"]]
+            scored_by_id[chunk.get("_source_key", chunk["chunk_id"])]
             for chunk in all_chunks
-            if chunk.get("page") == page_number
+            if chunk.get("page") == page_number and chunk.get("document_id") == heading_chunk.get("document_id")
         ],
         key=lambda chunk: chunk.get("chunk_index", 0),
     )
@@ -371,9 +372,9 @@ def _gather_heading_context(
     if page_chunks and heading_index == len(page_chunks) - 1:
         next_page_chunks = sorted(
             [
-                scored_by_id[chunk["chunk_id"]]
+                scored_by_id[chunk.get("_source_key", chunk["chunk_id"])]
                 for chunk in all_chunks
-                if chunk.get("page") == page_number + 1
+                if chunk.get("page") == page_number + 1 and chunk.get("document_id") == heading_chunk.get("document_id")
             ],
             key=lambda chunk: chunk.get("chunk_index", 0),
         )
@@ -408,10 +409,10 @@ def _select_pages(
     by_page: dict = {}
 
     for chunk in scored_chunks:
-        page_key = chunk.get("page")
+        page_key = (chunk.get("document_id"), chunk.get("page"))
 
-        if page_key is None:
-            page_key = ("unnumbered", chunk["chunk_id"])
+        if page_key[1] is None:
+            page_key = (chunk.get("document_id"), ("unnumbered", chunk.get("chunk_id")))
 
         if page_key not in by_page or _best_rerank(chunk) > _best_rerank(by_page[page_key]):
             by_page[page_key] = chunk
@@ -441,7 +442,7 @@ def _select_pages(
         page_chunks = [
             chunk
             for chunk in scored_chunks
-            if chunk.get("page") == page_number
+            if chunk.get("document_id") == page_chosen.get("document_id") and chunk.get("page") == page_number
         ]
         page_chunks.sort(
             key=lambda chunk: chunk.get("chunk_index", 0)
@@ -483,39 +484,41 @@ def score_chunks(
 
 
 def retrieve_relevant_chunks(
-    document: dict,
+    document: dict | list[dict],
     question: str,
     document_id: str,
     max_results: int = MAX_RESULTS,
 ) -> list[dict]:
-    """Three-stage retrieval:
+    """Three-stage retrieval, including multi-document support."""
+    document_variants = document if isinstance(document, list) else [document]
+    document_variants = [item for item in document_variants if isinstance(item, dict)]
 
-    1. hybrid recall (BM25 + embeddings + TF-IDF overlap)
-    2. topic/section heading locator (number-based headings)
-    3. page-level selection with a semantic relevance floor
-
-    Returns the most relevant chunks for answer generation.
-    """
-    chunks = document.get("chunks", [])
-
-    if not chunks or not question.strip():
+    if not document_variants or not question.strip():
         return []
 
-    # --- Stage A: score every chunk ---------------------------------------
-    all_scored = _score_all_chunks(chunks, question, document_id)
-    scored_by_id = {chunk["chunk_id"]: chunk for chunk in all_scored}
+    chunks: list[dict] = []
+    for document_entry in document_variants:
+        for chunk in document_entry.get("chunks", []):
+            cloned = dict(chunk)
+            cloned["document_id"] = document_entry.get("document_id")
+            cloned["filename"] = document_entry.get("filename")
+            cloned["file_type"] = document_entry.get("file_type") or (document_entry.get("file_path", "").split(".")[-1].lower() if document_entry.get("file_path") else "pdf")
+            cloned["_source_key"] = f"{document_entry.get('document_id', 'doc')}:{chunk.get('chunk_id', 'unknown')}"
+            chunks.append(cloned)
 
-    # Exclude TOC / cover pages when scanning section headings
+    if not chunks:
+        return []
+
+    cache_key = document_id or "|".join(str(item.get("document_id")) for item in document_variants if item.get("document_id"))
+    all_scored = _score_all_chunks(chunks, question, cache_key)
+    scored_by_id = {chunk.get("_source_key", chunk["chunk_id"]): chunk for chunk in all_scored}
+
     heading_scan_pool = [
-        chunk
-        for chunk in all_scored
-        if not (chunk.get("is_toc") or chunk.get("is_cover"))
+        chunk for chunk in all_scored if not (chunk.get("is_toc") or chunk.get("is_cover"))
     ]
-
     if not heading_scan_pool:
         heading_scan_pool = all_scored
 
-    # --- Section-number question ("what is the content of section 7?") -----
     number_match = _SECTION_QUESTION.search(question)
 
     if number_match:
@@ -527,9 +530,7 @@ def retrieve_relevant_chunks(
                 stripped = line.strip()
                 if not _is_numbered_heading(stripped):
                     continue
-                section_prefix = re.match(
-                    r"^\s*" + re.escape(section_number) + r"[.)]\s+", stripped
-                )
+                section_prefix = re.match(r"^\s*" + re.escape(section_number) + r"[.)]\s+", stripped)
                 if section_prefix:
                     heading_chunk = chunk
                     break
@@ -537,57 +538,29 @@ def retrieve_relevant_chunks(
                 break
 
         if heading_chunk:
-            context = _gather_heading_context(
-                chunks,
-                heading_chunk,
-                scored_by_id,
-                MAX_CHUNKS_PER_PAGE,
-            )
+            context = _gather_heading_context(chunks, heading_chunk, scored_by_id, MAX_CHUNKS_PER_PAGE)
             for index, chunk in enumerate(context):
-                chunk_relevance = max(0.05, 1.0 - index * 0.15)
-                chunk["relevance_score"] = chunk_relevance
+                chunk["relevance_score"] = max(0.05, 1.0 - index * 0.15)
                 chunk["semantic_score"] = chunk.get("semantic_score", 0.0)
             return context[:max_results]
 
-    # --- Topic heading locator ----------------------------------------------
     if not number_match:
-        informative_tokens: set = set()
+        informative_tokens: set[str] = set()
         for chunk in all_scored[:MAX_CANDIDATES]:
             informative_tokens.update(chunk.get("_informative_tokens", []))
 
         informative_tokens = [token for token in informative_tokens if token]
-
-        heading_chunk = _find_heading_chunk(
-            heading_scan_pool,
-            informative_tokens,
-        )
+        heading_chunk = _find_heading_chunk(heading_scan_pool, informative_tokens)
 
         if heading_chunk:
-            context = _gather_heading_context(
-                chunks,
-                heading_chunk,
-                scored_by_id,
-                MAX_CHUNKS_PER_PAGE,
-            )
-            # Re-rank the heading context by the query-specific score
-            context.sort(
-                key=lambda chunk: (
-                    chunk.get("semantic_score", 0.0),
-                    chunk.get("relevance_score", 0.0),
-                ),
-                reverse=True,
-            )
-
-            # Only accept the locator result if it is reasonably relevant
-            if context[0].get("semantic_score", 0.0) >= SEMANTIC_FLOOR - 0.05:
+            context = _gather_heading_context(chunks, heading_chunk, scored_by_id, MAX_CHUNKS_PER_PAGE)
+            context.sort(key=lambda chunk: (chunk.get("semantic_score", 0.0), chunk.get("relevance_score", 0.0)), reverse=True)
+            if context and context[0].get("semantic_score", 0.0) >= SEMANTIC_FLOOR - 0.05:
                 return context[:max_results]
 
-    # --- Standard path: selection over the candidate list -------------------
     candidates = all_scored[:MAX_CANDIDATES]
-
     candidates = [
-        chunk
-        for chunk in candidates
+        chunk for chunk in candidates
         if chunk.get("semantic_score", 0.0) >= SEMANTIC_FLOOR
         and chunk.get("relevance_score", 0.0) >= PRE_FLOOR
     ]
