@@ -27,17 +27,25 @@ load_dotenv()
 # parents[1] = app
 # parents[2] = backend
 BASE_DIR = Path(__file__).resolve().parents[2]
+load_dotenv(BASE_DIR / ".env")
+load_dotenv()
+
+from app.config import get_llm_config
 
 DOCUMENT_DIR = BASE_DIR / "data" / "documents"
 
-GROQ_API_KEY = os.getenv("GROQ_API_KEY", "").strip()
+_api_key, _base_url, _model_name = get_llm_config()
+if _api_key and _api_key != "gsk_your_actual_key_here":
+    try:
+        client = OpenAI(api_key=_api_key, base_url=_base_url)
+    except Exception:
+        client = None
+else:
+    client = None
+llm_client = client
 
-MODEL_NAME = os.getenv(
-    "GROQ_MODEL",
-    "openai/gpt-oss-120b",
-)
-
-GROQ_BASE_URL = "https://api.groq.com/openai/v1"
+model = _model_name
+MODEL_NAME = model
 
 UNAVAILABLE_MESSAGE = (
     "This information is not available in the uploaded document."
@@ -49,154 +57,18 @@ MAX_PREVIEW_CHARS = 300
 MAX_SOURCE_PAGES = 3
 
 
-client = None
-if GROQ_API_KEY:
-    client = OpenAI(
-        api_key=GROQ_API_KEY,
-        base_url=GROQ_BASE_URL,
-    )
-
-
-def require_client() -> Any:
-    """Return the configured Groq client or raise a clear error."""
-    if client is None:
+def require_client() -> OpenAI:
+    """Return the configured OpenAI-compatible client or raise a clear error."""
+    global client, llm_client
+    api_key, base_url, _ = get_llm_config()
+    if not api_key or api_key == "gsk_your_actual_key_here":
         raise RuntimeError(
-            "GROQ_API_KEY is missing. Please add it to backend/.env"
+            "XAI_API_KEY is missing. Please add your API key (XAI_API_KEY or GROQ_API_KEY) to backend/.env"
         )
+    if client is None or getattr(client, "base_url", None) != base_url:
+        client = OpenAI(api_key=api_key, base_url=base_url)
+        llm_client = client
     return client
-def _first_sentence(text: str) -> str:
-    cleaned = clean_text(text)
-    if not cleaned:
-        return "This document contains no readable text."
-
-    match = re.split(r"(?<=[.!?])\s+", cleaned)
-    sentence = match[0].strip()
-    if sentence:
-        return sentence[:240]
-    return cleaned[:240]
-
-
-def _normalize_summary_entry(value: str) -> str:
-    cleaned = clean_text(value or "")
-    if not cleaned:
-        return ""
-    cleaned = cleaned.replace("**", "").replace("##", "")
-    return cleaned.strip()
-
-
-def _section_lines(section_text: str) -> list[str]:
-    lines: list[str] = []
-    for raw_line in section_text.splitlines():
-        line = _normalize_summary_entry(raw_line)
-        if not line:
-            continue
-        if line.startswith("- ") or line.startswith("* "):
-            lines.append(line[2:].strip())
-        else:
-            lines.append(line)
-    unique: list[str] = []
-    seen: set[str] = set()
-    for item in lines:
-        item = item.strip()
-        if not item or item in seen:
-            continue
-        unique.append(item)
-        seen.add(item)
-    return unique[:8]
-
-
-def _build_structured_summary(summary_text: str, filename: str, document_id: str) -> dict:
-    raw_summary = (summary_text or "").strip()
-    if not raw_summary:
-        return {
-            "document_id": document_id,
-            "filename": filename,
-            "overview": "This document contains no readable text.",
-            "main_topics": [],
-            "important_points": [],
-            "key_takeaways": [],
-            "generated_at": datetime.now(timezone.utc).isoformat(),
-            "source_count": 0,
-            "status": "empty",
-        }
-
-    sections: dict[str, list[str]] = {
-        "overview": [],
-        "main_topics": [],
-        "important_points": [],
-        "key_takeaways": [],
-    }
-
-    current_section = "overview"
-    section_pattern = re.compile(r"^##\s*(.+?)\s*$", re.IGNORECASE)
-    for raw_line in raw_summary.splitlines():
-        heading_match = section_pattern.match(raw_line.strip())
-        if heading_match:
-            heading = heading_match.group(1).strip().lower()
-            if "overview" in heading or "main topic" in heading:
-                current_section = "overview"
-            elif "important section" in heading or "key concept" in heading or "important definitions" in heading:
-                current_section = "important_points"
-            elif "main findings" in heading or "conclusion" in heading:
-                current_section = "key_takeaways"
-            else:
-                current_section = "main_topics"
-            continue
-
-        value = _normalize_summary_entry(raw_line)
-        if not value:
-            continue
-        if value.startswith("- ") or value.startswith("* "):
-            value = value[2:].strip()
-        if value:
-            sections[current_section].append(value)
-
-    overview = " ".join(sections["overview"]) or _first_sentence(raw_summary)
-    main_topics = sections["main_topics"] or _section_lines(raw_summary)[:3]
-    important_points = sections["important_points"] or _section_lines(raw_summary)[3:6] or [overview]
-    key_takeaways = sections["key_takeaways"] or _section_lines(raw_summary)[6:9] or [overview]
-
-    return {
-        "document_id": document_id,
-        "filename": filename,
-        "overview": overview[:600],
-        "main_topics": main_topics[:6],
-        "important_points": important_points[:6],
-        "key_takeaways": key_takeaways[:6],
-        "generated_at": datetime.now(timezone.utc).isoformat(),
-        "status": "processed",
-    }
-
-
-@lru_cache(maxsize=128)
-def generate_document_summary(document_id: str) -> dict:
-    """Build a concise structured summary from the stored document text."""
-    document_id = str(document_id).strip()
-    if not document_id:
-        raise ValueError("document_id is required")
-
-    document = load_document(document_id)
-    chunks = get_all_document_chunks(document_id)
-    if not chunks:
-        return {
-            "document_id": document_id,
-            "filename": document.get("filename", "Document"),
-            "overview": "This document contains no readable text.",
-            "main_topics": [],
-            "important_points": [],
-            "key_takeaways": [],
-            "generated_at": datetime.now(timezone.utc).isoformat(),
-            "source_count": 0,
-            "status": "empty",
-        }
-
-    result = summarize_document(document_id=document_id)
-    summary_text = (result.get("answer") or "").strip()
-    summary = _build_structured_summary(summary_text, document.get("filename", "Document"), document_id)
-    summary["source_count"] = len(result.get("sources") or [])
-    return summary
-
-
 
 
 def _first_sentence(text: str) -> str:
@@ -335,6 +207,7 @@ def generate_document_summary(document_id: str) -> dict:
 # ============================================================================
 # BASIC TEXT HELPERS
 # ============================================================================
+
 
 def normalize_whitespace(text: str) -> str:
     """
@@ -968,10 +841,221 @@ def _document_page_text(
     return ""
 
 
+def normalize_text_for_matching(text: str) -> str:
+    """Normalize text by lowercasing, stripping punctuation, and collapsing whitespace."""
+    if not text:
+        return ""
+    no_punct = re.sub(r"[^\w\s]", " ", str(text).lower())
+    return " ".join(no_punct.split())
+
+
+STOPWORDS = {
+    "a", "an", "the", "in", "on", "at", "to", "for", "of", "and", "or", "is",
+    "are", "was", "were", "be", "been", "by", "as", "it", "its", "this", "that",
+    "these", "those", "with", "from", "into", "can", "could", "will", "would",
+    "should", "have", "has", "had", "do", "does", "did", "but", "not", "what",
+    "which", "who", "whom", "how", "when", "where", "why", "we", "you", "they",
+    "i", "he", "she", "our", "your", "their", "my", "his", "her", "all", "so",
+    "such", "also", "than", "then", "just", "very", "any", "some"
+}
+
+
+def match_ocr_boxes(
+    target_text: str,
+    ocr_lines: list[dict],
+    ocr_words: list[dict] | None = None,
+    secondary_text: str | None = None,
+) -> tuple[str, dict | None, list[dict], float | None, str]:
+    """
+    Robust multi-stage matcher between target/source text and OCR regions.
+    Returns:
+        (matched_ocr_text, overall_bbox, merged_bboxes, confidence, match_type)
+    """
+    if not ocr_lines:
+        return "", None, [], None, "none"
+
+    norm_target = normalize_text_for_matching(target_text)
+    norm_secondary = normalize_text_for_matching(secondary_text or "")
+
+    logger.info("[DocuMind Matcher] Input target_text: %s", (target_text or "")[:120])
+    logger.info("[DocuMind Matcher] Normalized target: %s", norm_target[:120])
+    logger.info("[DocuMind Matcher] Total OCR lines: %d", len(ocr_lines))
+
+    norm_lines = [
+        {
+            "line": line,
+            "norm_text": normalize_text_for_matching(line.get("text", "")),
+            "tokens": set(normalize_text_for_matching(line.get("text", "")).split()),
+            "block_num": line.get("block_num", 0),
+            "line_num": line.get("line_num", 0),
+        }
+        for line in ocr_lines
+        if line.get("text", "").strip()
+    ]
+
+    matched_lines: list[dict] = []
+    match_type = "exact"
+
+    # STAGE 1: Exact line or substring match in target_text or secondary_text
+    for item in norm_lines:
+        nt = item["norm_text"]
+        if not nt:
+            continue
+        if len(nt) >= 5 and (nt in norm_target or norm_target in nt):
+            matched_lines.append(item["line"])
+        elif norm_secondary and len(nt) >= 5 and (nt in norm_secondary or norm_secondary in nt):
+            matched_lines.append(item["line"])
+
+    # Check joined neighboring OCR items (pairs of adjacent lines)
+    if not matched_lines:
+        for i in range(len(norm_lines) - 1):
+            joined = norm_lines[i]["norm_text"] + " " + norm_lines[i+1]["norm_text"]
+            if len(joined) >= 8 and (joined in norm_target or norm_target in joined):
+                if norm_lines[i]["line"] not in matched_lines:
+                    matched_lines.append(norm_lines[i]["line"])
+                if norm_lines[i+1]["line"] not in matched_lines:
+                    matched_lines.append(norm_lines[i+1]["line"])
+
+    # STAGE 2: Phrase / Shingle window matching (4-word, 3-word shingles)
+    if not matched_lines:
+        target_words = norm_target.split()
+        if norm_secondary:
+            target_words = target_words + [w for w in norm_secondary.split() if w not in target_words]
+
+        shingles = []
+        for n in (4, 3):
+            for i in range(len(target_words) - n + 1):
+                phrase = " ".join(target_words[i:i+n])
+                if phrase:
+                    shingles.append(phrase)
+
+        for shingle in shingles:
+            for item in norm_lines:
+                if shingle in item["norm_text"]:
+                    if item["line"] not in matched_lines:
+                        matched_lines.append(item["line"])
+            if len(matched_lines) >= 3:
+                break
+
+        if matched_lines:
+            match_type = "phrase"
+
+    # STAGE 3: Meaningful keyword matching
+    if not matched_lines:
+        keywords = set()
+        for text_source in (norm_target, norm_secondary):
+            for word in text_source.split():
+                if len(word) >= 3 and word not in STOPWORDS:
+                    keywords.add(word)
+
+        if keywords:
+            scored_lines = []
+            for item in norm_lines:
+                overlap = item["tokens"].intersection(keywords)
+                if overlap:
+                    score = len(overlap)
+                    scored_lines.append((score, item["line"]))
+
+            if scored_lines:
+                scored_lines.sort(key=lambda x: x[0], reverse=True)
+                max_score = scored_lines[0][0]
+                min_threshold = max(1, max_score // 2)
+                for score, line in scored_lines:
+                    if score >= min_threshold:
+                        matched_lines.append(line)
+                    if len(matched_lines) >= 5:
+                        break
+                if matched_lines:
+                    match_type = "keyword"
+
+    # STAGE 4: Word-level matching fallback
+    matched_words_list: list[dict] = []
+    if not matched_lines and ocr_words:
+        keywords = set()
+        for text_source in (norm_target, norm_secondary):
+            for word in text_source.split():
+                if len(word) >= 3 and word not in STOPWORDS:
+                    keywords.add(word)
+
+        if keywords:
+            for w in ocr_words:
+                wt = normalize_text_for_matching(w.get("text", ""))
+                if wt in keywords:
+                    matched_words_list.append(w)
+            if matched_words_list:
+                match_type = "keyword"
+
+    # STAGE 5: Box Merging & Output Construction
+    if not matched_lines and not matched_words_list:
+        logger.info("[DocuMind Matcher] No OCR regions matched target text.")
+        return "", None, [], None, "none"
+
+    if matched_lines:
+        sorted_items = sorted(matched_lines, key=lambda l: (l["bbox"]["y"], l["bbox"]["x"]))
+        raw_boxes = [item["bbox"] for item in sorted_items]
+        confs = [item.get("confidence", 0.9) for item in sorted_items]
+        matched_ocr_text = " ".join(item["text"].strip() for item in sorted_items if item.get("text"))
+    else:
+        sorted_items = sorted(matched_words_list, key=lambda w: (w["bbox"]["y"], w["bbox"]["x"]))
+        raw_boxes = [item["bbox"] for item in sorted_items]
+        confs = [item.get("confidence", 0.9) for item in sorted_items]
+        matched_ocr_text = " ".join(item["text"].strip() for item in sorted_items if item.get("text"))
+
+    merged_bboxes: list[dict] = []
+    current_box = dict(raw_boxes[0])
+
+    for next_box in raw_boxes[1:]:
+        vert_gap = next_box["y"] - (current_box["y"] + current_box["height"])
+        avg_h = (current_box["height"] + next_box["height"]) / 2.0
+        horiz_overlap = (
+            min(current_box["x"] + current_box["width"], next_box["x"] + next_box["width"])
+            - max(current_box["x"], next_box["x"])
+        )
+
+        if vert_gap <= avg_h * 1.8 and (horiz_overlap > -60 or abs(next_box["x"] - current_box["x"]) < 100):
+            new_x = min(current_box["x"], next_box["x"])
+            new_y = min(current_box["y"], next_box["y"])
+            new_right = max(current_box["x"] + current_box["width"], next_box["x"] + next_box["width"])
+            new_bottom = max(current_box["y"] + current_box["height"], next_box["y"] + next_box["height"])
+            current_box = {
+                "x": new_x,
+                "y": new_y,
+                "width": max(1, new_right - new_x),
+                "height": max(1, new_bottom - new_y),
+            }
+        else:
+            merged_bboxes.append(current_box)
+            current_box = dict(next_box)
+
+    merged_bboxes.append(current_box)
+
+    min_x = min(b["x"] for b in raw_boxes)
+    min_y = min(b["y"] for b in raw_boxes)
+    max_x = max(b["x"] + b["width"] for b in raw_boxes)
+    max_y = max(b["y"] + b["height"] for b in raw_boxes)
+
+    overall_bbox = {
+        "x": min_x,
+        "y": min_y,
+        "width": max(1, max_x - min_x),
+        "height": max(1, max_y - min_y),
+    }
+
+    avg_conf = round(sum(confs) / max(1, len(confs)), 3)
+
+    logger.info("[DocuMind Matcher] Match successful (type: %s)", match_type)
+    logger.info("[DocuMind Matcher] Matched OCR text: %s", matched_ocr_text[:120])
+    logger.info("[DocuMind Matcher] Overall bbox: %s", overall_bbox)
+    logger.info("[DocuMind Matcher] Merged boxes count: %d", len(merged_bboxes))
+
+    return matched_ocr_text, overall_bbox, merged_bboxes, avg_conf, match_type
+
+
 def build_document_sources(
     retrieved_chunks: list[dict],
     document_map: dict[str, dict],
     max_sources: int = MAX_SOURCE_PAGES,
+    answer_text: str | None = None,
 ) -> list[dict]:
     """
     Builds fresh source records directly from the retrieval result.
@@ -985,6 +1069,7 @@ def build_document_sources(
     - Chunks that do not belong to an uploaded document are dropped.
     - Sources without usable text are skipped.
     - No LLM-generated quote is ever used as source text.
+    - For image documents, computes matching bounding box coordinates and dimensions.
     """
     if not retrieved_chunks or not document_map:
         return []
@@ -995,7 +1080,7 @@ def build_document_sources(
     for chunk in retrieved_chunks:
         page = normalize_page_number(chunk.get("page"))
         if page is None:
-            continue
+            page = 1
 
         text = clean_text(chunk.get("text", ""))
         if not text:
@@ -1009,12 +1094,15 @@ def build_document_sources(
             document_map.get(document_id),
             page,
         )
-        # Safety net: if the chunk cannot be located on the claimed page,
-        # skip it so we never send a wrong page number.
-        if not page_text or not find_text_span(
-            page_text=page_text,
-            quote=text,
-        ):
+        if not page_text:
+            doc_pages = document_map.get(document_id, {}).get("pages", [])
+            if doc_pages:
+                page_text = clean_text(doc_pages[0].get("text", ""))
+
+        if not page_text:
+            continue
+
+        if not find_text_span(page_text=page_text, quote=text) and text.lower() not in page_text.lower():
             continue
 
         try:
@@ -1068,6 +1156,81 @@ def build_document_sources(
             continue
         exact_text = exact_text[:MAX_SOURCE_TEXT_CHARS]
 
+        file_type = str(document.get("file_type", "")).lower()
+        bbox = None
+        bboxes = []
+        img_w = None
+        img_h = None
+        conf = None
+        all_ocr = []
+        match_type = None
+        matched_text = ""
+
+        if file_type in ("png", "jpg", "jpeg", "webp"):
+            source_title = f"{document.get('filename', 'Image')} · Image"
+            ocr_lines = chunk.get("ocr_lines")
+            ocr_words = chunk.get("ocr_words")
+            img_w = chunk.get("image_width") or document.get("image_width")
+            img_h = chunk.get("image_height") or document.get("image_height")
+            all_ocr = chunk.get("all_ocr_bboxes") or document.get("all_ocr_bboxes") or []
+
+            doc_pages = document.get("pages", [])
+            if doc_pages and (not ocr_lines or not img_w):
+                first_p = doc_pages[0]
+                ocr_lines = ocr_lines or first_p.get("ocr_lines", [])
+                ocr_words = ocr_words or first_p.get("ocr_words", [])
+                img_w = img_w or first_p.get("image_width")
+                img_h = img_h or first_p.get("image_height")
+                all_ocr = all_ocr or first_p.get("all_ocr_bboxes", [])
+
+            # Lazy extraction fallback: If document was saved before OCR bounding boxes were stored,
+            # load the image from disk and extract them right now!
+            if not ocr_lines and document.get("file_path"):
+                try:
+                    from app.services.ocr_service import extract_ocr_data
+                    fp = Path(document["file_path"])
+                    if fp.exists():
+                        fresh_ocr = extract_ocr_data(fp.read_bytes())
+                        ocr_lines = fresh_ocr.get("lines", [])
+                        ocr_words = fresh_ocr.get("words", [])
+                        img_w = fresh_ocr.get("image_width")
+                        img_h = fresh_ocr.get("image_height")
+                        all_ocr = fresh_ocr.get("all_ocr_bboxes", [])
+                        document["ocr_lines"] = ocr_lines
+                        document["ocr_words"] = ocr_words
+                        document["image_width"] = img_w
+                        document["image_height"] = img_h
+                        document["all_ocr_bboxes"] = all_ocr
+                        if doc_pages:
+                            doc_pages[0]["ocr_lines"] = ocr_lines
+                            doc_pages[0]["ocr_words"] = ocr_words
+                            doc_pages[0]["image_width"] = img_w
+                            doc_pages[0]["image_height"] = img_h
+                            doc_pages[0]["all_ocr_bboxes"] = all_ocr
+                        doc_json_path = DOCUMENT_DIR / f"{document_id}.json"
+                        if doc_json_path.exists():
+                            doc_json_path.write_text(
+                                json.dumps(document, ensure_ascii=False, indent=2),
+                                encoding="utf-8",
+                            )
+                except Exception as ex:
+                    logger.warning("[DocuMind AI] Lazy OCR extraction failed for %s: %s", document_id, ex)
+
+            if ocr_lines:
+                matched_text, bbox, bboxes, conf, match_type = match_ocr_boxes(
+                    target_text=exact_text,
+                    ocr_lines=ocr_lines,
+                    ocr_words=ocr_words,
+                    secondary_text=answer_text,
+                )
+
+        elif file_type == "docx":
+            source_title = f"{document.get('filename', 'Document')} · Section"
+        else:
+            source_title = f"{document.get('filename', 'Document')} · Page {page}"
+
+        final_source_text = matched_text if matched_text else exact_text
+
         source = {
             "page": page,
             "document_id": document.get("document_id"),
@@ -1075,15 +1238,20 @@ def build_document_sources(
             "file_type": document.get("file_type"),
             "chunk_id": chunk.get("chunk_id"),
             "chunk_index": chunk.get("chunk_index"),
-            "title": (
-                f"{document.get('filename', 'Document')} · Page {page}"
-            ),
-            "exact_text": exact_text,
-            "text": exact_text,
-            "preview": exact_text[:MAX_PREVIEW_CHARS],
+            "title": source_title,
+            "exact_text": final_source_text,
+            "text": final_source_text,
+            "preview": final_source_text[:MAX_PREVIEW_CHARS],
             "relevance_score": round(best["score"], 4),
             "character_start": chunk.get("char_start"),
             "character_end": chunk.get("char_end"),
+            "bbox": bbox,
+            "bboxes": bboxes,
+            "image_width": img_w,
+            "image_height": img_h,
+            "confidence": conf,
+            "all_ocr_bboxes": all_ocr,
+            "match_type": match_type,
         }
         sources.append(source)
 
@@ -1098,44 +1266,53 @@ def _ask_for_answer(
     user_prompt: str,
 ) -> str:
     """
-    Calls the model and returns the plain answer text.
+    Calls the configured LLM model and returns the plain answer text.
     Quotes returned by the model are deliberately ignored:
     source text always comes from the retrieval result instead.
     """
-    groq_client = require_client()
+    llm_client = require_client()
+    _, _, model_to_use = get_llm_config()
 
-    response = groq_client.chat.completions.create(
-        model=MODEL_NAME,
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt},
-        ],
-        response_format={"type": "json_object"},
-        temperature=0,
-        max_tokens=1400,
-    )
-
-    content = response.choices[0].message.content or ""
-    answer, _ = extract_json_answer(content)
-
-    if not answer:
-        retry_response = groq_client.chat.completions.create(
-            model=MODEL_NAME,
+    try:
+        response = llm_client.chat.completions.create(
+            model=model_to_use,
             messages=[
-                {
-                    "role": "system",
-                    "content": "Return only valid JSON with an answer key.",
-                },
+                {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
             response_format={"type": "json_object"},
             temperature=0,
             max_tokens=1400,
         )
-        retry_content = retry_response.choices[0].message.content or ""
-        answer, _ = extract_json_answer(retry_content)
+    except Exception as error:
+        logger.exception("[DocuMind AI] LLM API call failed: %s", error)
+        raise RuntimeError(f"LLM API error: {str(error)}")
+
+    content = response.choices[0].message.content or ""
+    answer, _ = extract_json_answer(content)
+
+    if not answer:
+        try:
+            retry_response = llm_client.chat.completions.create(
+                model=model_to_use,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "Return only valid JSON with an answer key.",
+                    },
+                    {"role": "user", "content": user_prompt},
+                ],
+                response_format={"type": "json_object"},
+                temperature=0,
+                max_tokens=1400,
+            )
+            retry_content = retry_response.choices[0].message.content or ""
+            answer, _ = extract_json_answer(retry_content)
+        except Exception as error:
+            logger.warning("[DocuMind AI] LLM JSON retry failed: %s", error)
 
     return (answer or "").strip()
+
 
 
 # ============================================================================
@@ -1193,6 +1370,16 @@ def generate_multi_document_answer(
         return {"answer": UNAVAILABLE_MESSAGE, "sources": []}
 
     if not retrieved_chunks:
+        has_any_text = any(
+            any(bool(p.get("text", "").strip()) for p in doc.get("pages", []))
+            for doc in documents
+        )
+        is_all_images = all(
+            str(doc.get("file_type", "")).lower() in ("png", "jpg", "jpeg", "webp")
+            for doc in documents
+        )
+        if is_all_images and not has_any_text:
+            return {"answer": "No readable text was detected in this image.", "sources": []}
         return {"answer": UNAVAILABLE_MESSAGE, "sources": []}
 
     document_map = {
@@ -1240,6 +1427,7 @@ def generate_multi_document_answer(
     sources = build_document_sources(
         retrieved_chunks=retrieved_chunks,
         document_map=document_map,
+        answer_text=answer,
     )
 
     return {"answer": answer, "sources": sources}
@@ -1278,6 +1466,10 @@ def generate_answer(
     pages = document.get("pages", []) if isinstance(document, dict) else []
 
     if not retrieved_chunks:
+        has_any_text = any(bool(p.get("text", "").strip()) for p in pages)
+        is_image = str(document.get("file_type", "")).lower() in ("png", "jpg", "jpeg", "webp")
+        if is_image and not has_any_text:
+            return {"answer": "No readable text was detected in this image.", "sources": []}
         return {"answer": UNAVAILABLE_MESSAGE, "sources": []}
 
     context, _page_lookup = build_page_context(
@@ -1286,6 +1478,10 @@ def generate_answer(
     )
 
     if not context.strip():
+        has_any_text = any(bool(p.get("text", "").strip()) for p in pages)
+        is_image = str(document.get("file_type", "")).lower() in ("png", "jpg", "jpeg", "webp")
+        if is_image and not has_any_text:
+            return {"answer": "No readable text was detected in this image.", "sources": []}
         return {"answer": UNAVAILABLE_MESSAGE, "sources": []}
 
     prompt = build_prompt(question=question, context=context)
@@ -1315,6 +1511,7 @@ def generate_answer(
     sources = build_document_sources(
         retrieved_chunks=retrieved_chunks,
         document_map=document_map,
+        answer_text=answer,
     )
 
     return {"answer": answer, "sources": sources}
@@ -1360,7 +1557,7 @@ def is_summary_request(question: str) -> bool:
 
     # What is the document about?
     r"\bwhat\s+(is|are)\s+(this|the)\s+"
-    r"(document|pdf|file|paper|text|book|upload)\s+about\b",
+    r"(document|pdf|file|paper|text|book|upload|image|photo|picture)\s+about\b",
 
     r"\bwhat\s+is\s+it\s+about\b",
 
@@ -1373,10 +1570,10 @@ def is_summary_request(question: str) -> bool:
     # Explain complete document
     r"\bexplain\s+(the\s+)?"
     r"(whole|entire|complete|all\s+of\s+the|uploaded)"
-    r"\s*(document|pdf|file|paper|text)?\b",
+    r"\s*(document|pdf|file|paper|text|image)?\b",
 
     r"\bexplain\s+(this|the)\s+"
-    r"(document|pdf|file|paper)\b",
+    r"(document|pdf|file|paper|image|picture)\b",
 
     # Give me an overview
     r"\bgive\s+(me\s+)?(an?\s+)?overview\b",
@@ -1385,16 +1582,17 @@ def is_summary_request(question: str) -> bool:
     r"\bgive\s+(me\s+)?(the\s+)?summary\b",
 
     # Document summary
-    r"\b(document|pdf|file|paper)\s+summary\b",
+    r"\b(document|pdf|file|paper|image|picture)\s+summary\b",
 
     # Outline and breakdown
     r"\b(outline|breakdown)\s+of\s+"
-    r"(this|the)\s+(document|pdf|file|paper)\b",
+    r"(this|the)\s+(document|pdf|file|paper|image)\b",
 
     # Walkthrough
     r"\b(walk\s+me\s+through|walkthrough\s+of)\s+"
-    r"(this|the)\s+(document|pdf|file|paper)\b",
+    r"(this|the)\s+(document|pdf|file|paper|image)\b",
 ]
+
 
     for pattern in summary_patterns:
         if re.search(pattern, clean_q):
@@ -1497,17 +1695,39 @@ def build_summary_sources(
         preview = text[:MAX_PREVIEW_CHARS]
         title = f"Page {page}" if page is not None else "Document"
 
+        bbox = None
+        bboxes = []
+        conf = None
+        match_type = None
+        matched_text = ""
+        ocr_lines = chunk.get("ocr_lines", [])
+        if ocr_lines:
+            matched_text, bbox, bboxes, conf, match_type = match_ocr_boxes(
+                target_text=exact_text,
+                ocr_lines=ocr_lines,
+                ocr_words=chunk.get("ocr_words", []),
+            )
+
+        final_text = matched_text if matched_text else exact_text
+
         sources.append({
             "page": page,
             "chunk_id": chunk.get("chunk_id"),
             "chunk_index": chunk.get("chunk_index"),
             "title": title,
-            "exact_text": exact_text,
-            "text": exact_text,
-            "preview": preview,
+            "exact_text": final_text,
+            "text": final_text,
+            "preview": final_text[:MAX_PREVIEW_CHARS],
             "relevance_score": 1.0,
             "character_start": chunk.get("char_start"),
             "character_end": chunk.get("char_end"),
+            "bbox": bbox,
+            "bboxes": bboxes,
+            "image_width": chunk.get("image_width"),
+            "image_height": chunk.get("image_height"),
+            "confidence": conf,
+            "all_ocr_bboxes": chunk.get("all_ocr_bboxes", []),
+            "match_type": match_type,
         })
 
     return sources
@@ -1554,17 +1774,18 @@ RULES:
 - Do not mention 'chunks', 'embeddings', or internal system instructions.
 """.strip()
 
-    groq_client = require_client()
+    llm_client = require_client()
+    _, _, model_to_use = get_llm_config()
 
-    response = groq_client.chat.completions.create(
-        model=MODEL_NAME,
+    response = llm_client.chat.completions.create(
+        model=model_to_use,
+
         messages=[
             {
                 "role": "system",
                 "content": (
                     "You are DocuMind AI, an expert document analyst. "
-                    "Analyze the provided document and produce a clear, factual, and comprehensive summary. "
-                    "Use ONLY information present in the document. Do not hallucinate."
+                    "Synthesize the provided document text into a structured, faithful document summary."
                 ),
             },
             {"role": "user", "content": prompt},
@@ -1628,10 +1849,12 @@ def summarize_chunks_in_batches(
             f"DOCUMENT SECTION:\n{batch_text}"
         )
 
-        groq_client = require_client()
+        llm_client = require_client()
+        _, _, model_to_use = get_llm_config()
 
-        response = groq_client.chat.completions.create(
-            model=MODEL_NAME,
+        response = llm_client.chat.completions.create(
+            model=model_to_use,
+
             messages=[
                 {
                     "role": "system",
@@ -1681,10 +1904,12 @@ RULES:
 - Do not mention 'chunks', 'batches', or internal system instructions.
 """.strip()
 
-    groq_client = require_client()
+    llm_client = require_client()
+    _, _, model_to_use = get_llm_config()
 
-    response = groq_client.chat.completions.create(
-        model=MODEL_NAME,
+    response = llm_client.chat.completions.create(
+        model=model_to_use,
+
         messages=[
             {
                 "role": "system",
@@ -1844,5 +2069,10 @@ __all__ = [
     "ChatbotService",
     "chat_service",
     "ask_question",
+    "client",
+    "model",
+    "require_client",
     "UNAVAILABLE_MESSAGE",
+    "match_ocr_boxes",
+    "build_document_sources",
 ]

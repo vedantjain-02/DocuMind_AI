@@ -5,12 +5,15 @@ import os
 load_dotenv()
 
 client = OpenAI(
-    api_key=os.getenv("GROQ_API_KEY"),
-    base_url="https://api.groq.com/openai/v1"
+    api_key=os.getenv("XAI_API_KEY"),
+    base_url="https://api.x.ai/v1",
 )
 
+model = os.getenv("LLM_MODEL", "openai/gpt-oss-120b")
+
 response = client.chat.completions.create(
-    model="openai/gpt-oss-120b",
+    model=model,
+
     messages=[
         {
             "role": "user",

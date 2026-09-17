@@ -35,6 +35,7 @@ class ChatSource(BaseModel):
     chunk_id: int | None = None
     chunk_index: int | None = None
     title: str | None = None
+    text: str | None = None
     exact_text: str | None = None
     preview: str | None = None
     relevance_score: float | None = None
@@ -43,6 +44,13 @@ class ChatSource(BaseModel):
     document_id: str | None = None
     filename: str | None = None
     file_type: str | None = None
+    bbox: dict | None = None
+    bboxes: list[dict] = Field(default_factory=list)
+    image_width: int | None = None
+    image_height: int | None = None
+    confidence: float | None = None
+    all_ocr_bboxes: list[dict] = Field(default_factory=list)
+    match_type: str | None = None
 
 
 class ChatResponse(BaseModel):
@@ -54,9 +62,10 @@ class ChatResponse(BaseModel):
 
 
 class ChatRequest(BaseModel):
-    document_id: str | None = Field(default=None, min_length=1)
+    document_id: str | None = None
     document_ids: list[str] = Field(default_factory=list)
-    question: str = Field(..., min_length=2)
+    question: str = ""
+    conversation_id: str | None = None
 
 
 class ConversationMessage(BaseModel):
@@ -164,19 +173,17 @@ def chat_with_document(request: ChatRequest):
     document), only that document is used.  This prevents answers or
     sources from leaking across uploaded files.
     """
-    question = request.question.strip()
-    if not question:
+    if not request.question or not request.question.strip():
         raise HTTPException(status_code=400, detail="Question is required.")
+    question = request.question.strip()
 
     # Single-document mode when the frontend selects one active document.
+    active_document_ids: list[str] = []
     if request.document_id and request.document_id.strip():
-        active_document_ids = [request.document_id.strip()]
-    else:
-        active_document_ids = [
-            item.strip()
-            for item in (request.document_ids or [])
-            if isinstance(item, str) and item.strip()
-        ]
+        active_document_ids.append(request.document_id.strip())
+    for item in (request.document_ids or []):
+        if isinstance(item, str) and item.strip() and item.strip() not in active_document_ids:
+            active_document_ids.append(item.strip())
 
     if not active_document_ids:
         raise HTTPException(status_code=400, detail="Document ID is required.")
@@ -189,6 +196,24 @@ def chat_with_document(request: ChatRequest):
     except Exception as error:
         logger.exception("[DocuMind AI] Document loading failed.")
         raise HTTPException(status_code=500, detail=f"Document loading failed: {str(error)}")
+
+    # Check for empty OCR text on image documents
+    is_image_doc = all(
+        str(doc.get("file_type", "")).lower() in ("png", "jpg", "jpeg", "webp")
+        for doc in documents
+    )
+    has_any_text = any(
+        any(bool(p.get("text", "").strip()) for p in doc.get("pages", []))
+        for doc in documents
+    )
+    if is_image_doc and not has_any_text:
+        return ChatResponse(
+            document_id=active_document_ids[0] if active_document_ids else None,
+            document_ids=active_document_ids,
+            question=question,
+            answer="No readable text was detected in this image.",
+            sources=[],
+        )
 
     summary_requested = False
     try:
@@ -237,9 +262,33 @@ def chat_with_document(request: ChatRequest):
             document_ids=active_document_ids,
             documents=documents,
         )
+    except ValueError as error:
+        logger.warning("[DocuMind AI] Invalid chat request: %s", error)
+        raise HTTPException(status_code=400, detail=str(error))
+    except RuntimeError as error:
+        logger.exception("[DocuMind AI] Service runtime error during answer generation.")
+        raise HTTPException(status_code=503, detail=str(error))
     except Exception as error:
         logger.exception("[DocuMind AI] Answer generation failed.")
         raise HTTPException(status_code=500, detail=f"Answer generation failed: {str(error)}")
+
+    # Record message in conversation history if conversation_id provided
+    if request.conversation_id and request.conversation_id.strip():
+        try:
+            add_message(
+                conversation_id=request.conversation_id.strip(),
+                role="user",
+                content=question,
+                sources=[],
+            )
+            add_message(
+                conversation_id=request.conversation_id.strip(),
+                role="assistant",
+                content=result.get("answer", ""),
+                sources=result.get("sources", []),
+            )
+        except Exception as err:
+            logger.debug("Could not record message in conversation %s: %s", request.conversation_id, err)
 
     return ChatResponse(
         document_id=active_document_ids[0] if active_document_ids else None,

@@ -19,14 +19,17 @@ router = APIRouter(
 )
 
 
-UPLOAD_DIR = Path("data/uploads")
-DOCUMENT_DIR = Path("data/documents")
+BASE_DIR = Path(__file__).resolve().parents[2]
+UPLOAD_DIR = BASE_DIR / "data" / "uploads"
+DOCUMENT_DIR = BASE_DIR / "data" / "documents"
 
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 DOCUMENT_DIR.mkdir(parents=True, exist_ok=True)
 
 
-ALLOWED_EXTENSIONS = {".pdf", ".docx"}
+ALLOWED_EXTENSIONS = {".pdf", ".docx", ".png", ".jpg", ".jpeg", ".webp"}
+IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
+
 
 
 class DocumentSummary(BaseModel):
@@ -93,12 +96,20 @@ def _load_document_metadata(document_id: str) -> dict:
 def _delete_document_record(document_id: str) -> None:
     document_json_path = DOCUMENT_DIR / f"{document_id}.json"
     if document_json_path.exists():
+        try:
+            data = json.loads(document_json_path.read_text(encoding="utf-8"))
+            saved_file_path = Path(data.get("file_path", ""))
+            if saved_file_path.exists():
+                saved_file_path.unlink(missing_ok=True)
+        except Exception:
+            pass
         document_json_path.unlink(missing_ok=True)
 
-    for suffix in (".pdf", ".docx"):
+    for suffix in ALLOWED_EXTENSIONS:
         file_path = UPLOAD_DIR / f"{document_id}{suffix}"
         if file_path.exists():
             file_path.unlink(missing_ok=True)
+
 
 
 @router.get("/documents", response_model=list[DocumentSummary])
@@ -116,6 +127,14 @@ async def list_documents():
     return documents
 
 
+@router.get("/documents/{document_id}")
+async def get_document_details(document_id: str):
+    try:
+        return _load_document_metadata(document_id)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+
 @router.get("/documents/{document_id}/file")
 async def get_document_file(document_id: str):
     try:
@@ -127,11 +146,22 @@ async def get_document_file(document_id: str):
     if not file_path.exists():
         raise HTTPException(status_code=404, detail="Document file not found")
 
+    media_types = {
+        ".pdf": "application/pdf",
+        ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        ".png": "image/png",
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".webp": "image/webp",
+    }
+    content_type = media_types.get(file_path.suffix.lower(), "application/octet-stream")
+
     return FileResponse(
         path=str(file_path),
-        media_type="application/octet-stream",
+        media_type=content_type,
         filename=document_data.get("filename", file_path.name),
     )
+
 
 
 @router.get("/documents/{document_id}/summary", response_model=DocumentSummaryResponse)
@@ -231,8 +261,9 @@ async def upload_document(
         if extension not in ALLOWED_EXTENSIONS:
             raise HTTPException(
                 status_code=400,
-                detail=f"Unsupported file type for '{filename}'. Only PDF and DOCX are allowed.",
+                detail=f"Unsupported file type for '{filename}'. Allowed formats: PDF, DOCX, PNG, JPG, JPEG, WEBP.",
             )
+
 
         if filename.lower() in existing_names:
             raise HTTPException(
@@ -272,6 +303,9 @@ async def upload_document(
                 "upload_status": "processed",
                 "pages": pages,
                 "chunks": chunks,
+                "image_width": document_data.get("image_width"),
+                "image_height": document_data.get("image_height"),
+                "all_ocr_bboxes": document_data.get("all_ocr_bboxes", []),
             }
 
             document_json_path.write_text(
@@ -294,13 +328,33 @@ async def upload_document(
             document_json_path.unlink(missing_ok=True)
             raise
 
+        except ValueError as error:
+            file_path.unlink(missing_ok=True)
+            document_json_path.unlink(missing_ok=True)
+            logger.warning("[DocuMind AI] Document extraction value error for '%s': %s", filename, error)
+            raise HTTPException(
+                status_code=400,
+                detail=f"Document extraction failed for '{filename}': {str(error)}",
+            )
+
+        except RuntimeError as error:
+            file_path.unlink(missing_ok=True)
+            document_json_path.unlink(missing_ok=True)
+            logger.error("[DocuMind AI] Document extraction runtime error for '%s': %s", filename, error)
+            raise HTTPException(
+                status_code=503,
+                detail=f"Extraction service error for '{filename}': {str(error)}",
+            )
+
         except Exception as error:
             file_path.unlink(missing_ok=True)
             document_json_path.unlink(missing_ok=True)
+            logger.exception("[DocuMind AI] Unexpected document extraction error for '%s'", filename)
             raise HTTPException(
                 status_code=500,
                 detail=f"Document extraction failed for '{filename}': {str(error)}",
             )
+
 
     if len(uploaded_results) == 1:
         return uploaded_results[0]

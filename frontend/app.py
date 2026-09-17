@@ -1,13 +1,17 @@
+import base64
 import hashlib
 import html
+import json
 import logging
 import re
 from io import BytesIO
 from typing import Any
 
 import fitz
+from PIL import Image
 import requests
 import streamlit as st
+import streamlit.components.v1 as components
 
 
 # ============================================================================
@@ -332,6 +336,7 @@ DEFAULT_STATE = {
     "document_id": None,
     "filename": None,
     "pdf_bytes": None,
+    "image_bytes": None,
     "documents": [],
     "documents_needs_refresh": True,
     "processed_file_fingerprints": set(),
@@ -389,11 +394,17 @@ def auto_title(question: str, limit: int = 40) -> str:
 
 def reset_document_viewer():
     st.session_state.pdf_bytes = None
+    st.session_state.image_bytes = None
     st.session_state.current_page = 1
     st.session_state.page_input = 1
     st.session_state.pending_page = None
     st.session_state.highlight_text = ""
     st.session_state.active_source_key = None
+    st.session_state.selected_source_bbox = None
+    st.session_state.selected_source_bboxes = []
+    st.session_state.selected_source_dimensions = None
+    st.session_state.selected_source_confidence = None
+    st.session_state.selected_source_match_type = None
     st.session_state.total_pages = 0
     st.session_state.total_chunks = 0
 
@@ -401,6 +412,11 @@ def reset_document_viewer():
 def clear_highlight():
     st.session_state.highlight_text = ""
     st.session_state.active_source_key = None
+    st.session_state.selected_source_bbox = None
+    st.session_state.selected_source_bboxes = []
+    st.session_state.selected_source_dimensions = None
+    st.session_state.selected_source_confidence = None
+    st.session_state.selected_source_match_type = None
 
 
 # ============================================================================
@@ -461,14 +477,17 @@ def refresh_documents():
         st.session_state.total_pages = selected.get("total_pages", 0)
         st.session_state.total_chunks = selected.get("total_chunks", 0)
 
-        if (
-            st.session_state.filename
-            and st.session_state.filename.lower().endswith(".pdf")
-            and not st.session_state.pdf_bytes
-        ):
-            st.session_state.pdf_bytes = fetch_selected_document_bytes(
-                st.session_state.document_id
-            )
+        if st.session_state.filename and not st.session_state.pdf_bytes and not st.session_state.image_bytes:
+            filename_lower = st.session_state.filename.lower()
+            if filename_lower.endswith(".pdf"):
+                st.session_state.pdf_bytes = fetch_selected_document_bytes(
+                    st.session_state.document_id
+                )
+            elif any(filename_lower.endswith(ext) for ext in (".png", ".jpg", ".jpeg", ".webp")):
+                st.session_state.image_bytes = fetch_selected_document_bytes(
+                    st.session_state.document_id
+                )
+
 
     except requests.exceptions.RequestException:
         st.session_state.documents = []
@@ -528,8 +547,12 @@ def activate_document(document: dict):
     st.session_state.total_chunks = document.get("total_chunks", 0)
     reset_document_viewer()
 
-    if filename.lower().endswith(".pdf"):
+    filename_lower = filename.lower()
+    if filename_lower.endswith(".pdf"):
         st.session_state.pdf_bytes = fetch_selected_document_bytes(document_id)
+    elif any(filename_lower.endswith(ext) for ext in (".png", ".jpg", ".jpeg", ".webp")):
+        st.session_state.image_bytes = fetch_selected_document_bytes(document_id)
+
 
 
 # ============================================================================
@@ -1242,13 +1265,20 @@ def render_pdf_page(
 # ============================================================================
 
 def open_source(source: dict, source_key: str):
-    page = source.get("page")
-
-    if page is None:
-        page = source.get("page_number")
-
     # Clear the previous highlight first.
     clear_highlight()
+
+    # If this source belongs to another document in workspace, switch to it:
+    target_doc_id = source.get("document_id")
+    if target_doc_id and target_doc_id != st.session_state.get("document_id"):
+        for doc in st.session_state.get("documents", []):
+            if doc.get("document_id") == target_doc_id:
+                activate_document(doc)
+                break
+
+    page = source.get("page")
+    if page is None:
+        page = source.get("page_number")
 
     if page is not None:
         try:
@@ -1270,6 +1300,18 @@ def open_source(source: dict, source_key: str):
         st.session_state.highlight_text = exact
         st.session_state.active_source_key = source_key
 
+    # Save image OCR source highlights
+    st.session_state.selected_source_bbox = source.get("bbox")
+    st.session_state.selected_source_bboxes = source.get("bboxes", [])
+    st.session_state.selected_source_dimensions = (
+        source.get("image_width"),
+        source.get("image_height"),
+    )
+    st.session_state.selected_source_confidence = source.get("confidence")
+    st.session_state.selected_source_match_type = source.get("match_type")
+    if source.get("all_ocr_bboxes"):
+        st.session_state.all_ocr_bboxes = source.get("all_ocr_bboxes", [])
+
 
 def render_sources(sources, message_id):
     if not sources:
@@ -1282,12 +1324,22 @@ def render_sources(sources, message_id):
 
     for source_index, source in enumerate(sources):
         page_number = source.get("page")
-
         if page_number is None:
             page_number = source.get("page_number")
 
-        if page_number is None:
-            continue
+        file_type = str(source.get("file_type", "")).lower()
+        title = source.get("title")
+
+        if file_type in ("png", "jpg", "jpeg", "webp"):
+            btn_label = f"🔍 View Image Source · {source.get('filename') or 'Image'}"
+            btn_help = "Highlight the exact source text region in the image"
+        elif file_type == "docx":
+            btn_label = f"📖 Open source · {title or 'Section'}"
+            btn_help = "Inspect source section text"
+        else:
+            p_label = f"Page {page_number}" if page_number is not None else (title or "Source")
+            btn_label = f"📖 Open source · {p_label}"
+            btn_help = "Navigate to this page and highlight the exact source text"
 
         source_key = f"source_{message_id}_{source_index}"
         is_active = (
@@ -1297,11 +1349,11 @@ def render_sources(sources, message_id):
         button_type = "primary" if is_active else "secondary"
 
         if st.button(
-            f"📖 Open source · Page {page_number}",
+            btn_label,
             key=f"open_{source_key}",
             use_container_width=True,
             type=button_type,
-            help="Navigate to this page and highlight the exact source text",
+            help=btn_help,
         ):
             open_source(source, source_key)
             st.rerun()
@@ -1394,13 +1446,22 @@ def upload_documents(uploaded_files):
                         item["status"] = status
 
             except requests.exceptions.RequestException as error:
+                detail_msg = ""
+                if getattr(error, "response", None) is not None:
+                    try:
+                        detail_msg = error.response.json().get("detail", "")
+                    except Exception:
+                        detail_msg = getattr(error.response, "text", "")
+                error_display = detail_msg or str(error)
+
                 for item in st.session_state.upload_statuses:
                     if item["name"] == uploaded_file.name:
                         item["status"] = "Failed"
 
                 st.error(
-                    f"Upload failed for {uploaded_file.name}: {error}"
+                    f"Upload failed for {uploaded_file.name}: {error_display}"
                 )
+
 
     if uploaded_document_ids:
         st.session_state.document_id = uploaded_document_ids[-1]
@@ -1542,8 +1603,8 @@ with st.sidebar:
     upload_key = f"file_uploader_{st.session_state.upload_key}"
 
     uploaded_files = st.file_uploader(
-        "Choose PDF or DOCX",
-        type=["pdf", "docx"],
+        "Choose PDF, DOCX, or Image (PNG, JPG, WEBP)",
+        type=["pdf", "docx", "png", "jpg", "jpeg", "webp"],
         accept_multiple_files=True,
         key=upload_key,
     )
@@ -1600,6 +1661,14 @@ with st.sidebar:
             is_active = document_id == st.session_state.document_id
             card_class = "doc-card active" if is_active else "doc-card"
 
+            file_type = str(document.get("file_type", "file")).lower()
+            if file_type in ("png", "jpg", "jpeg", "webp"):
+                type_badge = f"🖼️ {file_type.upper()} · OCR Ready"
+            elif file_type == "docx":
+                type_badge = "📝 DOCX · Document"
+            else:
+                type_badge = f"📄 {file_type.upper()} · {document.get('total_pages', 0)} pages"
+
             st.markdown(
                 f"""
                 <div class="{card_class}">
@@ -1607,13 +1676,13 @@ with st.sidebar:
                         {escape_html(filename)}
                     </div>
                     <div class="doc-meta">
-                        {escape_html(document.get("file_type", "file")).upper()}
-                        · {document.get("total_pages", 0)} pages
+                        {escape_html(type_badge)}
                     </div>
                 </div>
                 """,
                 unsafe_allow_html=True,
             )
+
 
             document_col, remove_col = st.columns([1, 1])
 
@@ -1713,7 +1782,7 @@ with st.sidebar:
     st.divider()
 
     st.caption("DocuMind AI")
-    st.caption("Powered by Groq + FastAPI")
+    st.caption("Powered by xAI Grok + FastAPI")
 
 
 # ============================================================================
@@ -1840,15 +1909,332 @@ with left_column:
                         "on this page."
                     )
 
+        elif st.session_state.image_bytes or (
+            st.session_state.filename
+            and any(st.session_state.filename.lower().endswith(ext) for ext in (".png", ".jpg", ".jpeg", ".webp"))
+        ):
+            if not st.session_state.image_bytes and st.session_state.document_id:
+                st.session_state.image_bytes = fetch_selected_document_bytes(
+                    st.session_state.document_id
+                )
+
+            if st.session_state.image_bytes:
+                has_active_highlight = bool(
+                    st.session_state.get("highlight_text")
+                    or st.session_state.get("selected_source_bbox")
+                    or st.session_state.get("selected_source_bboxes")
+                )
+                if has_active_highlight:
+                    if st.button(
+                        "Clear highlight",
+                        key="clear_image_highlight_btn",
+                        use_container_width=True,
+                    ):
+                        clear_highlight()
+                        st.rerun()
+
+                show_all_ocr = st.checkbox(
+                    "Show all detected text regions",
+                    value=st.session_state.get("show_all_ocr_regions", False),
+                    key="toggle_all_ocr_regions",
+                )
+                st.session_state.show_all_ocr_regions = show_all_ocr
+
+                orig_dims = st.session_state.get("selected_source_dimensions")
+                orig_w, orig_h = (None, None)
+                if orig_dims and isinstance(orig_dims, (list, tuple)) and len(orig_dims) == 2:
+                    orig_w, orig_h = orig_dims[0], orig_dims[1]
+
+                if not orig_w or not orig_h:
+                    try:
+                        with Image.open(BytesIO(st.session_state.image_bytes)) as pil_img:
+                            orig_w, orig_h = pil_img.size
+                    except Exception:
+                        orig_w, orig_h = 1000, 1000
+
+                fname_lower = (st.session_state.filename or "").lower()
+                if fname_lower.endswith(".jpg") or fname_lower.endswith(".jpeg"):
+                    mime_type = "image/jpeg"
+                elif fname_lower.endswith(".webp"):
+                    mime_type = "image/webp"
+                else:
+                    mime_type = "image/png"
+
+                img_b64 = base64.b64encode(st.session_state.image_bytes).decode("utf-8")
+
+                all_boxes = st.session_state.get("all_ocr_bboxes", [])
+                selected_box = st.session_state.get("selected_source_bbox")
+                selected_boxes = st.session_state.get("selected_source_bboxes", [])
+
+                selected_boxes_json = json.dumps(selected_boxes or ([selected_box] if selected_box else []))
+                overall_box_json = json.dumps(selected_box or {})
+                all_ocr_boxes_json = json.dumps(all_boxes if show_all_ocr else [])
+
+                LOGGER.info("[DocuMind Frontend Image Viewer] Filename: %s, Dimensions: %sx%s", st.session_state.filename, orig_w, orig_h)
+                LOGGER.info("[DocuMind Frontend Image Viewer] Selected bbox: %s", selected_box)
+                LOGGER.info("[DocuMind Frontend Image Viewer] Selected bboxes count: %d", len(selected_boxes))
+
+                aspect_ratio = orig_h / max(1, orig_w)
+                estimated_height = int(680 * aspect_ratio) + 25
+                viewer_height = min(900, max(280, estimated_height))
+
+                component_html = f"""<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  * {{ box-sizing: border-box; margin: 0; padding: 0; }}
+  body {{
+    background: transparent;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    overflow-x: hidden;
+  }}
+  .image-container {{
+    position: relative;
+    width: 100%;
+    display: inline-block;
+    border-radius: 8px;
+    overflow: hidden;
+    background: #080c1a;
+    border: 1px solid rgba(99, 102, 241, 0.25);
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+  }}
+  .doc-image {{
+    display: block;
+    width: 100%;
+    height: auto;
+    user-select: none;
+  }}
+  .highlight-overlay {{
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+  }}
+  .ocr-box {{
+    fill: rgba(56, 189, 248, 0.08);
+    stroke: rgba(56, 189, 248, 0.5);
+    stroke-width: 1.5px;
+    stroke-dasharray: 4,2;
+    rx: 2px;
+  }}
+  .source-box {{
+    fill: rgba(99, 102, 241, 0.38);
+    stroke: #818cf8;
+    stroke-width: 2.5px;
+    rx: 4px;
+    filter: drop-shadow(0 0 6px rgba(99, 102, 241, 0.7));
+  }}
+  .enclosing-box {{
+    fill: none;
+    stroke: #c084fc;
+    stroke-width: 2px;
+    stroke-dasharray: 6,3;
+    rx: 6px;
+    filter: drop-shadow(0 0 8px rgba(192, 132, 252, 0.6));
+  }}
+</style>
+</head>
+<body>
+
+<div class="image-container" id="container">
+  <img id="doc-image" class="doc-image" src="data:{mime_type};base64,{img_b64}" alt="Document Image" />
+  <svg id="svg-overlay" class="highlight-overlay" xmlns="http://www.w3.org/2000/svg">
+  </svg>
+</div>
+
+<script>
+  const origW = {orig_w};
+  const origH = {orig_h};
+  const selectedBoxes = {selected_boxes_json};
+  const overallBox = {overall_box_json};
+  const allOcrBoxes = {all_ocr_boxes_json};
+
+  const img = document.getElementById('doc-image');
+  const svg = document.getElementById('svg-overlay');
+  const container = document.getElementById('container');
+
+  function renderHighlights() {{
+    const dispW = img.clientWidth || img.offsetWidth;
+    const dispH = img.clientHeight || img.offsetHeight;
+    if (!dispW || !dispH || !origW || !origH) return;
+
+    const scaleX = dispW / origW;
+    const scaleY = dispH / origH;
+
+    console.log('[DocuMind Client] Original dimensions:', origW, origH);
+    console.log('[DocuMind Client] Displayed dimensions:', dispW, dispH);
+    console.log('[DocuMind Client] Scale factors: scaleX=' + scaleX + ', scaleY=' + scaleY);
+    console.log('[DocuMind Client] Selected boxes:', selectedBoxes);
+
+    svg.innerHTML = '';
+    svg.setAttribute('viewBox', '0 0 ' + dispW + ' ' + dispH);
+
+    // 1. Draw all OCR boxes if toggled on
+    if (allOcrBoxes && allOcrBoxes.length > 0) {{
+      allOcrBoxes.forEach(function(b) {{
+        const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+        rect.setAttribute('x', (b.x * scaleX));
+        rect.setAttribute('y', (b.y * scaleY));
+        rect.setAttribute('width', Math.max(2, b.width * scaleX));
+        rect.setAttribute('height', Math.max(2, b.height * scaleY));
+        rect.setAttribute('class', 'ocr-box');
+        svg.appendChild(rect);
+      }});
+    }}
+
+    let firstSourceEl = null;
+
+    // 2. Draw individual matched source boxes
+    if (selectedBoxes && selectedBoxes.length > 0) {{
+      selectedBoxes.forEach(function(b, idx) {{
+        const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+        const sx = b.x * scaleX;
+        const sy = b.y * scaleY;
+        const sw = Math.max(3, b.width * scaleX);
+        const sh = Math.max(3, b.height * scaleY);
+        rect.setAttribute('x', sx);
+        rect.setAttribute('y', sy);
+        rect.setAttribute('width', sw);
+        rect.setAttribute('height', sh);
+        rect.setAttribute('class', 'source-box');
+        rect.id = 'source-rect-' + idx;
+        svg.appendChild(rect);
+        if (!firstSourceEl) firstSourceEl = rect;
+      }});
+
+      // 3. Enclosing border if multiple boxes
+      if (overallBox && overallBox.x !== undefined && selectedBoxes.length > 1) {{
+        const enc = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+        const padX = 4 * scaleX;
+        const padY = 4 * scaleY;
+        enc.setAttribute('x', Math.max(0, overallBox.x * scaleX - padX));
+        enc.setAttribute('y', Math.max(0, overallBox.y * scaleY - padY));
+        enc.setAttribute('width', overallBox.width * scaleX + padX * 2);
+        enc.setAttribute('height', overallBox.height * scaleY + padY * 2);
+        enc.setAttribute('class', 'enclosing-box');
+        svg.appendChild(enc);
+      }}
+    }}
+
+    // 4. Scroll to highlighted region smoothly
+    if (firstSourceEl) {{
+      const targetY = parseFloat(firstSourceEl.getAttribute('y')) || 0;
+      window.scrollTo({{ top: Math.max(0, targetY - 60), behavior: 'smooth' }});
+    }}
+  }}
+
+  img.addEventListener('load', renderHighlights);
+  if (img.complete) renderHighlights();
+
+  window.addEventListener('resize', renderHighlights);
+  if (window.ResizeObserver) {{
+    new ResizeObserver(renderHighlights).observe(container);
+  }}
+</script>
+</body>
+</html>"""
+                components.html(component_html, height=viewer_height, scrolling=True)
+
+                if selected_box or selected_boxes:
+                    conf = st.session_state.get("selected_source_confidence")
+                    conf_badge = f" · Confidence: {int(conf * 100)}%" if conf else ""
+                    match_type = st.session_state.get("selected_source_match_type")
+                    type_badge = f" ({match_type} match)" if match_type else ""
+                    st.markdown(
+                        f"""
+                        <div style="
+                            margin-top: 4px;
+                            margin-bottom: 12px;
+                            padding: 9px 13px;
+                            border-radius: 8px;
+                            background: rgba(99, 102, 241, 0.14);
+                            border: 1px solid rgba(99, 102, 241, 0.35);
+                            font-size: 12.5px;
+                            color: #c7d2fe;
+                        ">
+                            ✓ <strong>Answer source highlighted in image</strong>{type_badge}{conf_badge}
+                        </div>
+                        """,
+                        unsafe_allow_html=True,
+                    )
+                elif st.session_state.get("highlight_text"):
+                    st.markdown(
+                        """
+                        <div style="
+                            margin-top: 4px;
+                            margin-bottom: 12px;
+                            padding: 9px 13px;
+                            border-radius: 8px;
+                            background: rgba(239, 68, 68, 0.12);
+                            border: 1px solid rgba(239, 68, 68, 0.35);
+                            font-size: 12.5px;
+                            color: #fca5a5;
+                        ">
+                            ⚠️ <strong>Source location could not be identified in this image.</strong>
+                        </div>
+                        """,
+                        unsafe_allow_html=True,
+                    )
+                else:
+                    st.markdown(
+                        """
+                        <div style="
+                            margin-top: 4px;
+                            margin-bottom: 12px;
+                            padding: 9px 13px;
+                            border-radius: 8px;
+                            background: rgba(99, 102, 241, 0.10);
+                            border: 1px solid rgba(99, 102, 241, 0.25);
+                            font-size: 12px;
+                            color: #c7d2fe;
+                        ">
+                            ✓ <strong>OCR text extracted & ready for chat</strong>: Click any source citation or ask questions about this image in the AI Assistant panel.
+                        </div>
+                        """,
+                        unsafe_allow_html=True,
+                    )
+            else:
+                st.markdown(
+                    """
+                    <div class="empty-state">
+                        <div class="empty-icon">🖼️</div>
+                        <div class="empty-title">Image preview unavailable</div>
+                        <div class="empty-text">
+                            Preview unavailable / OCR text available.<br>
+                            You can ask questions about this image in the chat panel.
+                        </div>
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
+
+        elif st.session_state.filename and st.session_state.filename.lower().endswith(".docx"):
+            st.markdown(
+                """
+                <div class="empty-state">
+                    <div class="empty-icon">📄</div>
+                    <div class="empty-title">DOCX preview unavailable</div>
+                    <div class="empty-text">
+                        Preview unavailable / document text available.<br>
+                        Ask questions about this DOCX document in the chat panel.
+                    </div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
         elif st.session_state.filename:
             st.markdown(
                 """
                 <div class="empty-state">
                     <div class="empty-icon">📄</div>
-                    <div class="empty-title">Document uploaded</div>
+                    <div class="empty-title">Document ready</div>
                     <div class="empty-text">
-                        This file is ready for chat.<br>
-                        PDF preview is available for PDF files.
+                        Preview unavailable / text available.<br>
+                        This file is ready for chat.
                     </div>
                 </div>
                 """,
@@ -1862,13 +2248,14 @@ with left_column:
                     <div class="empty-icon">📚</div>
                     <div class="empty-title">Your document workspace</div>
                     <div class="empty-text">
-                        Upload a PDF or DOCX from the sidebar<br>
+                        Upload a PDF, DOCX, or Image (PNG, JPG, WEBP) from the sidebar<br>
                         to start reading and asking questions.
                     </div>
                 </div>
                 """,
                 unsafe_allow_html=True,
             )
+
 
 
 # ============================================================================
@@ -1997,6 +2384,9 @@ with right_column:
                 if document_ids:
                     payload["document_ids"] = document_ids
 
+                if getattr(st.session_state, "conversation_id", None):
+                    payload["conversation_id"] = st.session_state.conversation_id
+
                 try:
                     response = requests.post(
                         f"{BACKEND_URL}/api/chat",
@@ -2038,9 +2428,20 @@ with right_column:
                     )
 
                 except Exception as error:
-                    error_message = f"I couldn't get an answer: {error}"
+                    server_detail = None
+                    if hasattr(error, "response") and getattr(error, "response", None) is not None:
+                        try:
+                            error_json = error.response.json()
+                            server_detail = error_json.get("detail")
+                        except Exception:
+                            server_detail = getattr(error.response, "text", None)
 
-                    st.error(str(error))
+                    if server_detail:
+                        error_message = f"I couldn't get an answer: {server_detail}"
+                    else:
+                        error_message = f"I couldn't get an answer: {error}"
+
+                    st.error(error_message)
 
                     st.session_state.messages.append(
                         {

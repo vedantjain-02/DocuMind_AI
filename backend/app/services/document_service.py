@@ -599,6 +599,44 @@ def extract_docx_pages(
 
 
 # ============================================================================
+# IMAGE EXTRACTION (OCR)
+# ============================================================================
+
+IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
+
+
+def extract_image_pages(
+    file_path: str,
+) -> list[dict]:
+    """
+    Extract text from an image file (PNG, JPG, JPEG, WEBP) using OCR.
+    Preserves bounding boxes, confidence scores, and original image dimensions.
+    """
+    from app.services.ocr_service import extract_ocr_data
+
+    path = Path(file_path)
+    file_bytes = path.read_bytes()
+    ocr_data = extract_ocr_data(file_bytes)
+    raw_text = ocr_data.get("text", "")
+    cleaned_text = _clean_extracted_text(raw_text)
+    if not cleaned_text:
+        cleaned_text = raw_text.strip()
+
+    return [
+        {
+            "page": 1,
+            "text": cleaned_text,
+            "page_type": "content",
+            "image_width": ocr_data.get("image_width"),
+            "image_height": ocr_data.get("image_height"),
+            "ocr_lines": ocr_data.get("lines", []),
+            "ocr_words": ocr_data.get("words", []),
+            "all_ocr_bboxes": ocr_data.get("all_ocr_bboxes", []),
+        }
+    ]
+
+
+# ============================================================================
 # CHUNKING
 # ============================================================================
 
@@ -839,6 +877,14 @@ def chunk_document(
         if not page_text.strip():
             continue
 
+        extra_fields = {}
+        if "image_width" in page_data:
+            extra_fields["image_width"] = page_data.get("image_width")
+            extra_fields["image_height"] = page_data.get("image_height")
+            extra_fields["ocr_lines"] = page_data.get("ocr_lines", [])
+            extra_fields["ocr_words"] = page_data.get("ocr_words", [])
+            extra_fields["all_ocr_bboxes"] = page_data.get("all_ocr_bboxes", [])
+
         page_chunks = split_page_into_chunks(
             text=page_text,
         )
@@ -854,6 +900,7 @@ def chunk_document(
                 "is_toc": page_type == "toc",
                 "is_cover": page_type == "cover",
                 "page_type": page_type,
+                **extra_fields,
                 **chunk,
             })
 
@@ -868,7 +915,7 @@ def extract_document(
     file_path: str,
 ) -> dict:
     """
-    Extract pages and chunks from PDF or DOCX.
+    Extract pages and chunks from PDF, DOCX, or images (PNG, JPG, JPEG, WEBP).
     """
     path = Path(file_path)
 
@@ -889,19 +936,30 @@ def extract_document(
             file_path=str(path),
         )
 
+    elif extension in IMAGE_EXTENSIONS:
+        pages = extract_image_pages(
+            file_path=str(path),
+        )
+
     else:
         raise ValueError(
-            "Only PDF and DOCX files are supported"
+            f"Unsupported file type '{extension}'. Only PDF, DOCX, PNG, JPG, JPEG, and WEBP files are supported."
         )
 
     chunks = chunk_document(
         pages=pages,
     )
 
-    return {
+    result = {
         "pages": pages,
         "chunks": chunks,
     }
+    if extension in IMAGE_EXTENSIONS and pages:
+        result["image_width"] = pages[0].get("image_width")
+        result["image_height"] = pages[0].get("image_height")
+        result["all_ocr_bboxes"] = pages[0].get("all_ocr_bboxes", [])
+
+    return result
 
 
 # ============================================================================
@@ -912,6 +970,7 @@ __all__ = [
     "extract_document",
     "extract_pdf_pages",
     "extract_docx_pages",
+    "extract_image_pages",
     "split_page_into_chunks",
     "chunk_document",
     "classify_page",

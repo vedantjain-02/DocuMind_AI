@@ -48,12 +48,17 @@ dist/
 .eggs/
 
 # Project-generated data (local runtime files)
+data/
+data/**
 backend/data/uploads/
 backend/data/documents/
 backend/data/chroma/
 backend/data/**/*.json
 backend/data/**/*.bin
 backend/data/**/*.sqlite3
+backend/data/uploads/*
+backend/data/documents/*
+
 
 # Keep source files and repo metadata tracked
 !README.md
