@@ -39,6 +39,8 @@ class DocumentSummary(BaseModel):
     upload_status: str
     total_pages: int = 0
     total_chunks: int = 0
+    google_drive_file_id: str | None = None
+    source_type: str | None = "local"
 
 
 class UploadResult(BaseModel):
@@ -49,6 +51,8 @@ class UploadResult(BaseModel):
     total_pages: int
     total_chunks: int
     upload_status: str = "processed"
+    google_drive_file_id: str | None = None
+    source_type: str | None = "local"
 
 
 class DocumentSummaryResponse(BaseModel):
@@ -81,6 +85,8 @@ def _document_record_to_summary(document_data: dict) -> DocumentSummary:
         upload_status=document_data.get("upload_status", "processed"),
         total_pages=len(pages),
         total_chunks=len(chunks),
+        google_drive_file_id=document_data.get("google_drive_file_id"),
+        source_type=document_data.get("source_type", "local"),
     )
 
 
@@ -294,10 +300,12 @@ async def upload_document(
                 chunk["document_id"] = document_id
                 chunk["filename"] = filename
                 chunk["file_type"] = extension.lstrip(".")
+                chunk["source_type"] = "local"
 
             saved_document = {
                 "document_id": document_id,
                 "filename": filename,
+                "source_type": "local",
                 "file_path": str(file_path),
                 "file_type": extension.lstrip("."),
                 "upload_status": "processed",

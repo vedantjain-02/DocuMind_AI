@@ -5,6 +5,7 @@ import json
 import logging
 import re
 from io import BytesIO
+from pathlib import Path
 from typing import Any
 
 import fitz
@@ -31,299 +32,923 @@ st.set_page_config(
 
 
 # ============================================================================
-# PROFESSIONAL DARK THEME (navy / indigo palette)
+# PROFESSIONAL DARK THEME (Linear / Notion / Perplexity AI Workspace)
 # ============================================================================
 
 APP_CSS = """
+:root {
+  --bg: #070a14;
+  --bg-subtle: #0d1326;
+  --panel: #0d1428;
+  --panel-elevated: #131d38;
+  --panel-hover: #192548;
+  --border: #1a2544;
+  --border-subtle: rgba(255, 255, 255, 0.07);
+  --border-focus: #6366f1;
+  --text: #f8fafc;
+  --text-muted: #8899b7;
+  --muted: #627293;
+  --primary: #6366f1;
+  --primary-hover: #4f46e5;
+  --primary-light: rgba(99, 102, 241, 0.14);
+  --primary-glow: rgba(99, 102, 241, 0.35);
+  --accent-cyan: #06b6d4;
+  --accent-purple: #8b5cf6;
+  --success: #10b981;
+  --success-bg: rgba(16, 185, 129, 0.12);
+  --warning: #f59e0b;
+  --warning-bg: rgba(245, 158, 11, 0.12);
+  --highlight: #fbbf24;
+  --highlight-bg: rgba(251, 191, 36, 0.16);
+  --danger: #ef4444;
+  --font-stack: "Inter", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}
+
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
 
 html, body, [class*="css"] {
-    font-family: "Inter", sans-serif;
+  font-family: var(--font-stack) !important;
+  color: var(--text);
+  -webkit-font-smoothing: antialiased;
 }
 
+/* Base application background with deep ambient lighting */
 .stApp {
-    background:
-        radial-gradient(circle at 88% -5%, rgba(99, 102, 241, 0.20), transparent 32%),
-        radial-gradient(circle at -5% 100%, rgba(34, 211, 238, 0.10), transparent 28%),
-        #080c1a;
-    color: #e6eaf5;
+  background:
+    radial-gradient(ellipse 90% 45% at 85% -15%, rgba(99, 102, 241, 0.15), transparent 60%),
+    radial-gradient(ellipse 70% 35% at 10% 105%, rgba(139, 92, 246, 0.10), transparent 50%),
+    var(--bg) !important;
+  color: var(--text);
 }
 
+/* Hide Streamlit default chrome */
 [data-testid="stHeader"] {
-    background: transparent;
+  background: transparent !important;
+  height: 2rem !important;
+}
+#MainMenu, footer, .stDeployButton {
+  display: none !important;
+  visibility: hidden !important;
+}
+[data-testid="stToolbar"] {
+  display: none !important;
 }
 
+/* Clean up main container layout */
+.block-container {
+  padding-top: 0.85rem !important;
+  padding-bottom: 1.75rem !important;
+  padding-left: 2rem !important;
+  padding-right: 2rem !important;
+  max-width: 100% !important;
+}
+
+/* Custom sleek scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: rgba(10, 15, 30, 0.4);
+}
+::-webkit-scrollbar-thumb {
+  background: #1f2b4c;
+  border-radius: 999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #334470;
+}
+
+/* ==========================================================================
+   WORKSPACE HEADER (TOP BAR)
+   ========================================================================== */
+.workspace-header-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: rgba(13, 20, 40, 0.75);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 8px 16px;
+  margin-bottom: 16px;
+  gap: 16px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.35);
+}
+.header-left-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.brand-glyph {
+  width: 32px;
+  height: 32px;
+  border-radius: 9px;
+  background: linear-gradient(135deg, #6366f1, #8b5cf6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  box-shadow: 0 4px 14px rgba(99, 102, 241, 0.4);
+}
+.brand-text-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.brand-name {
+  font-size: 16px;
+  font-weight: 800;
+  letter-spacing: -0.4px;
+  color: #ffffff;
+}
+.brand-badge {
+  font-size: 9.5px;
+  font-weight: 800;
+  letter-spacing: 1.2px;
+  padding: 2px 7px;
+  border-radius: 6px;
+  background: rgba(99, 102, 241, 0.18);
+  border: 1px solid rgba(99, 102, 241, 0.35);
+  color: #a5b4fc;
+}
+.header-center-info {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 1;
+}
+.header-active-doc {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  background: rgba(22, 33, 62, 0.6);
+  border: 1px solid rgba(99, 102, 241, 0.3);
+  padding: 4px 12px;
+  border-radius: 999px;
+  font-size: 12px;
+}
+.header-doc-icon {
+  font-size: 13px;
+}
+.header-doc-name {
+  font-weight: 600;
+  color: #e2e8f0;
+}
+.header-doc-meta {
+  color: var(--muted);
+  font-size: 11px;
+}
+.header-source-pill {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 7px;
+  border-radius: 999px;
+}
+.header-source-pill.local {
+  background: rgba(99, 102, 241, 0.2);
+  color: #a5b4fc;
+  border: 1px solid rgba(99, 102, 241, 0.4);
+}
+.header-source-pill.drive {
+  background: rgba(56, 189, 248, 0.15);
+  color: #7dd3fc;
+  border: 1px solid rgba(56, 189, 248, 0.35);
+}
+.header-empty-doc {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.header-empty-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #475569;
+}
+.header-right-status {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.header-status-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11.5px;
+  font-weight: 600;
+  padding: 4px 10px;
+  border-radius: 999px;
+}
+.header-status-chip.success {
+  background: rgba(16, 185, 129, 0.14);
+  border: 1px solid rgba(16, 185, 129, 0.35);
+  color: #6ee7b7;
+}
+.header-status-chip.ready {
+  background: rgba(99, 102, 241, 0.12);
+  border: 1px solid rgba(99, 102, 241, 0.28);
+  color: #a5b4fc;
+}
+.header-doc-count {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+  background: rgba(255, 255, 255, 0.04);
+  padding: 3px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--border-subtle);
+}
+.chip-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #10b981;
+  box-shadow: 0 0 6px rgba(16, 185, 129, 0.8);
+}
+
+/* ==========================================================================
+   SIDEBAR STYLING
+   ========================================================================== */
 [data-testid="stSidebar"] {
-    background: linear-gradient(180deg, #0b1020 0%, #0d1328 100%);
-    border-right: 1px solid #232c4d;
+  background: linear-gradient(180deg, #090e1e 0%, #0c1228 100%) !important;
+  border-right: 1px solid var(--border) !important;
 }
-
 [data-testid="stSidebar"] > div:first-child {
-    padding: 18px 14px;
+  padding: 16px 14px !important;
 }
-
 [data-testid="stSidebar"] * {
-    color: #dfe6f5;
+  color: #dfe6f5;
 }
 
-.main-title {
-    color: #f4f6ff;
-    font-size: 40px;
-    font-weight: 800;
-    letter-spacing: -1.5px;
-    margin: 4px 0 2px;
+.sidebar-brand-wrapper {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  margin-bottom: 14px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+.sidebar-logo {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  background: linear-gradient(135deg, #6366f1, #06b6d4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+  box-shadow: 0 4px 16px rgba(99, 102, 241, 0.4);
+}
+.sidebar-brand-title {
+  font-size: 16px;
+  font-weight: 800;
+  color: #ffffff;
+  letter-spacing: -0.3px;
+  line-height: 1.2;
+}
+.sidebar-brand-desc {
+  font-size: 11px;
+  color: var(--muted);
+  line-height: 1.3;
 }
 
-.subtitle {
-    color: #8f9cc4;
-    font-size: 13px;
-    margin-bottom: 20px;
+.sidebar-section-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #64748b;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 1.2px;
+  text-transform: uppercase;
+  margin: 18px 0 8px 2px;
+}
+.sidebar-section-header::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: rgba(255, 255, 255, 0.06);
 }
 
-.brand-chip {
-    width: 46px;
-    height: 46px;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    border-radius: 14px;
-    background: linear-gradient(135deg, #6366f1, #8b5cf6);
-    box-shadow: 0 10px 30px rgba(99, 102, 241, 0.35);
-    font-size: 24px;
-    margin-bottom: 6px;
+/* Sidebar buttons */
+[data-testid="stSidebar"] .stButton > button {
+  background: #10182f;
+  color: #cbd5e1;
+  border: 1px solid #1e2b4d;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 500;
+  min-height: 32px;
+  padding: 4px 10px;
+  transition: all 0.15s ease;
+  text-align: left;
+}
+[data-testid="stSidebar"] .stButton > button:hover {
+  background: #172448;
+  color: #ffffff;
+  border-color: #6366f1;
+}
+[data-testid="stSidebar"] .stButton > button[kind="primary"] {
+  background: linear-gradient(135deg, #6366f1 0%, #4f46e5 100%) !important;
+  border: 1px solid rgba(255, 255, 255, 0.18) !important;
+  color: #ffffff !important;
+  box-shadow: 0 2px 12px rgba(99, 102, 241, 0.35);
+  font-weight: 600;
+}
+[data-testid="stSidebar"] .stButton > button[kind="primary"]:hover {
+  background: linear-gradient(135deg, #4f46e5 0%, #4338ca 100%) !important;
+  box-shadow: 0 4px 16px rgba(99, 102, 241, 0.5);
 }
 
-.sidebar-brand {
-    display: flex;
-    align-items: center;
-    gap: 11px;
-    color: #ffffff;
-    font-size: 18px;
-    font-weight: 800;
-    margin-bottom: 4px;
+/* Sidebar Popover (for chat rename/delete) */
+[data-testid="stSidebar"] [data-testid="stPopover"] > button {
+  min-height: 32px !important;
+  height: 32px !important;
+  padding: 0 !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  background: #10182f !important;
+  border: 1px solid #1e2b4d !important;
+  color: #64748b !important;
+  border-radius: 8px !important;
+}
+[data-testid="stSidebar"] [data-testid="stPopover"] > button:hover {
+  color: #ffffff !important;
+  border-color: #6366f1 !important;
+  background: #172448 !important;
 }
 
-.sidebar-brand-icon {
-    width: 34px;
-    height: 34px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    border-radius: 10px;
-    background: linear-gradient(135deg, #6366f1, #06b6d4);
-    box-shadow: 0 6px 18px rgba(99, 102, 241, 0.35);
-    font-size: 17px;
+/* Sidebar Document Cards */
+.sidebar-doc-card {
+  background: #0f172f;
+  border: 1px solid #1e2b4d;
+  border-radius: 9px;
+  padding: 8px 10px;
+  margin-bottom: 6px;
+  transition: all 0.15s ease;
+}
+.sidebar-doc-card:hover {
+  border-color: #3b4d79;
+  background: #141f3d;
+}
+.sidebar-doc-card.active {
+  border-color: #6366f1;
+  background: rgba(99, 102, 241, 0.12);
+  box-shadow: 0 0 12px rgba(99, 102, 241, 0.22);
+}
+.sidebar-doc-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.sidebar-doc-glyph {
+  font-size: 15px;
+  flex-shrink: 0;
+}
+.sidebar-doc-info {
+  flex: 1;
+  min-width: 0;
+}
+.sidebar-doc-name {
+  font-size: 12px;
+  font-weight: 600;
+  color: #f1f5f9;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  line-height: 1.3;
+}
+.sidebar-doc-meta {
+  font-size: 10px;
+  color: var(--muted);
+  line-height: 1.2;
+}
+.doc-active-pill {
+  font-size: 9px;
+  font-weight: 800;
+  color: #a5b4fc;
+  background: rgba(99, 102, 241, 0.25);
+  border: 1px solid rgba(99, 102, 241, 0.45);
+  padding: 2px 6px;
+  border-radius: 999px;
+  letter-spacing: 0.5px;
 }
 
-.sidebar-caption {
-    color: #7e8bb0;
-    font-size: 11px;
-    line-height: 1.7;
-    margin-bottom: 14px;
+/* Tabs in Sidebar */
+[data-testid="stSidebar"] [data-baseweb="tab-list"] {
+  background: #0b1122 !important;
+  border: 1px solid var(--border) !important;
+  border-radius: 8px !important;
+  padding: 3px !important;
+  gap: 2px !important;
+}
+[data-testid="stSidebar"] [data-baseweb="tab"] {
+  border-radius: 6px !important;
+  font-size: 11.5px !important;
+  font-weight: 600 !important;
+  color: #8899b7 !important;
+  padding: 5px 10px !important;
+  border: none !important;
+}
+[data-testid="stSidebar"] [data-baseweb="tab"][aria-selected="true"] {
+  background: #172448 !important;
+  color: #ffffff !important;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3) !important;
+}
+[data-baseweb="tab-highlight"], [data-baseweb="tab-border"] {
+  display: none !important;
 }
 
-.sidebar-section {
-    color: #6f7da8;
-    text-transform: uppercase;
-    letter-spacing: 1.4px;
-    font-size: 10px;
-    font-weight: 800;
-    margin: 20px 0 9px;
-}
-
-.panel-title {
-    color: #f1f3ff;
-    font-size: 19px;
-    font-weight: 800;
-}
-
-.panel-sub {
-    color: #7e8bb0;
-    font-size: 12px;
-    margin: 3px 0 12px;
-}
-
-.empty-state {
-    text-align: center;
-    padding: 96px 18px;
-    color: #8290b6;
-}
-
-.empty-icon {
-    font-size: 42px;
-    margin-bottom: 12px;
-}
-
-.empty-title {
-    color: #dfe6f5;
-    font-size: 17px;
-    font-weight: 700;
-    margin-bottom: 8px;
-}
-
-.empty-text {
-    color: #8290b6;
-    font-size: 12px;
-    line-height: 1.9;
-}
-
-.source-label {
-    color: #818cf8;
-    font-size: 10px;
-    font-weight: 800;
-    letter-spacing: 0.8px;
-    margin: 14px 0 7px;
-    text-transform: uppercase;
-}
-
-.source-preview {
-    color: #a2aed0;
-    font-size: 11px;
-    line-height: 1.7;
-    padding: 9px 12px;
-    border-left: 3px solid #6366f1;
-    background: rgba(16, 23, 46, 0.85);
-    border-radius: 0 9px 9px 0;
-    margin-bottom: 10px;
-}
-
-.doc-card {
-    background: #101730;
-    border: 1px solid #263055;
-    border-radius: 12px;
-    padding: 11px 12px;
-    margin-bottom: 9px;
-}
-
-.doc-card.active {
-    border-color: #6366f1;
-    box-shadow: 0 0 0 1px rgba(99, 102, 241, 0.25);
-}
-
-.doc-name {
-    color: #dfe6f5;
-    font-size: 12px;
-    font-weight: 700;
-    line-height: 1.6;
-    word-break: break-word;
-}
-
-.doc-meta {
-    color: #6f7da8;
-    font-size: 11px;
-    margin-top: 4px;
-}
-
-.status-badge {
-    display: inline-flex;
-    align-items: center;
-    gap: 8px;
-    color: #86efac;
-    background: rgba(22, 101, 52, 0.20);
-    border: 1px solid rgba(74, 222, 128, 0.25);
-    border-radius: 999px;
-    padding: 5px 9px;
-    font-size: 11px;
-    font-weight: 700;
-}
-
-.status-dot {
-    width: 7px;
-    height: 7px;
-    background: #4ade80;
-    border-radius: 50%;
-    box-shadow: 0 0 10px rgba(74, 222, 128, 0.7);
-}
-
-.metric-card {
-    background: #101730;
-    border: 1px solid #263055;
-    border-radius: 12px;
-    padding: 10px 12px;
-}
-
-.metric-label {
-    color: #6f7da8;
-    font-size: 10px;
-    margin-bottom: 4px;
-}
-
-.metric-value {
-    color: #f1f3ff;
-    font-size: 21px;
-    font-weight: 800;
-}
-
-.stButton > button {
-    background: #111a33;
-    color: #dbe3f3;
-    border: 1px solid #2a3557;
-    border-radius: 10px;
-    font-weight: 600;
-    min-height: 38px;
-    transition: background 0.15s ease, border-color 0.15s ease;
-}
-
-.stButton > button:hover {
-    background: #1a2547;
-    color: #ffffff;
-    border-color: #818cf8;
-}
-
-.stButton > button[kind="primary"] {
-    background: linear-gradient(135deg, #6366f1, #8b5cf6);
-    border: 1px solid transparent;
-    color: #ffffff;
-}
-
-.stButton > button[kind="primary"]:hover {
-    background: linear-gradient(135deg, #4f46e5, #7c3aed);
-}
-
-[data-testid="stChatMessage"] {
-    background: #10172e;
-    border: 1px solid #242e52;
-    border-radius: 14px;
-    padding: 12px 14px;
-}
-
-[data-testid="stChatMessage"] p {
-    font-size: 13px;
-    line-height: 1.75;
-}
-
-[data-testid="stChatInput"] textarea {
-    background: #0f1730;
-    color: #eef2ff;
-    border: 1px solid #2c3961;
-    border-radius: 12px;
-}
-
-[data-testid="stChatInput"] textarea:focus {
-    border-color: #6366f1;
-    box-shadow: 0 0 0 1px #6366f1;
-}
-
+/* File Uploader Dropzone */
 [data-testid="stFileUploader"] {
-    background: #101730;
-    border: 1px dashed #38446e;
-    border-radius: 12px;
-    padding: 6px;
+  background: rgba(14, 21, 41, 0.7) !important;
+  border: 1px dashed rgba(99, 102, 241, 0.35) !important;
+  border-radius: 10px !important;
+  padding: 10px !important;
+  transition: all 0.2s ease !important;
+}
+[data-testid="stFileUploader"]:hover {
+  border-color: #6366f1 !important;
+  background: rgba(99, 102, 241, 0.08) !important;
+}
+[data-testid="stFileUploader"] section {
+  padding: 2px !important;
 }
 
+/* ==========================================================================
+   MAIN WORKSPACE PANELS & CONTAINERS
+   ========================================================================== */
 [data-testid="stVerticalBlockBorderWrapper"] {
-    background: rgba(10, 16, 33, 0.7);
-    border-color: #222b4d !important;
-    border-radius: 15px !important;
+  background: rgba(12, 18, 35, 0.7) !important;
+  backdrop-filter: blur(14px) !important;
+  -webkit-backdrop-filter: blur(14px) !important;
+  border: 1px solid var(--border) !important;
+  border-radius: 14px !important;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35) !important;
 }
 
-hr {
-    border-color: #232c4d;
+.panel-header-wrap {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+  padding: 2px 2px;
+}
+.panel-kicker {
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 1.4px;
+  color: #818cf8;
+  text-transform: uppercase;
+  margin-bottom: 2px;
+}
+.panel-heading {
+  font-size: 16px;
+  font-weight: 700;
+  color: #ffffff;
+  letter-spacing: -0.2px;
+  line-height: 1.3;
+}
+.panel-badges {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.panel-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+}
+.panel-badge.badge-ready {
+  background: rgba(16, 185, 129, 0.14);
+  border: 1px solid rgba(16, 185, 129, 0.35);
+  color: #6ee7b7;
+}
+.panel-badge.badge-local {
+  background: rgba(99, 102, 241, 0.14);
+  border: 1px solid rgba(99, 102, 241, 0.35);
+  color: #a5b4fc;
+}
+.panel-badge.badge-drive {
+  background: rgba(56, 189, 248, 0.14);
+  border: 1px solid rgba(56, 189, 248, 0.35);
+  color: #7dd3fc;
+}
+.panel-badge.badge-pages {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: var(--muted);
+}
+
+.pulse-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #10b981;
+  box-shadow: 0 0 8px rgba(16, 185, 129, 0.85);
+  animation: pulse-glow 2s infinite ease-in-out;
+}
+@keyframes pulse-glow {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.5; transform: scale(0.8); }
+}
+
+/* ==========================================================================
+   DOCUMENT CANVAS & VIEWER
+   ========================================================================== */
+.pdf-canvas-wrapper {
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  padding: 16px;
+  background: rgba(6, 10, 20, 0.6);
+  border-radius: 10px;
+  margin: 10px 0;
+  border: 1px solid rgba(255, 255, 255, 0.04);
+}
+.pdf-paper {
+  background: #ffffff;
+  border-radius: 6px;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.75), 0 2px 6px rgba(0, 0, 0, 0.4);
+  padding: 0;
+  max-width: 100%;
+  overflow: hidden;
+  line-height: 0;
+}
+.pdf-paper img {
+  display: block;
+  border-radius: 6px;
+}
+
+.page-counter-badge {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 38px;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--muted);
+  background: #10172e;
+  border: 1px solid #1e2b4d;
+  border-radius: 8px;
+}
+
+.source-highlight-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  font-size: 12px;
+  margin-top: 8px;
+  margin-bottom: 8px;
+}
+.source-highlight-banner.active {
+  background: rgba(251, 191, 36, 0.14);
+  border: 1px solid rgba(251, 191, 36, 0.45);
+  color: #fde68a;
+}
+.source-highlight-banner.warning {
+  background: rgba(239, 68, 68, 0.12);
+  border: 1px solid rgba(239, 68, 68, 0.35);
+  color: #fca5a5;
+}
+
+/* Empty states */
+.workspace-empty-card {
+  text-align: center;
+  padding: 60px 24px;
+}
+.empty-card-glyph {
+  font-size: 44px;
+  margin-bottom: 14px;
+}
+.empty-card-title {
+  font-size: 18px;
+  font-weight: 700;
+  color: #f1f5f9;
+  margin-bottom: 6px;
+}
+.empty-card-subtitle {
+  font-size: 12.5px;
+  color: var(--muted);
+  line-height: 1.6;
+  max-width: 380px;
+  margin: 0 auto 16px;
+}
+.empty-card-formats {
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+.format-pill {
+  font-size: 10.5px;
+  font-weight: 700;
+  padding: 3px 8px;
+  border-radius: 6px;
+  background: #131d38;
+  border: 1px solid #233157;
+  color: #94a3b8;
+}
+.empty-card-tip {
+  font-size: 11px;
+  color: #64748b;
+  line-height: 1.6;
+}
+
+/* ==========================================================================
+   AI CHAT & SOURCES
+   ========================================================================== */
+[data-testid="stChatMessage"] {
+  background: #0e162f !important;
+  border: 1px solid #1f2c4e !important;
+  border-radius: 12px !important;
+  padding: 12px 14px !important;
+  margin-bottom: 10px !important;
+}
+[data-testid="stChatMessage"] p {
+  font-size: 13px !important;
+  line-height: 1.75 !important;
+  color: #e2e8f0 !important;
+}
+[data-testid="stChatMessage"] code {
+  background: #182242 !important;
+  color: #c7d2fe !important;
+  border: 1px solid #2a3962 !important;
+  border-radius: 4px !important;
+  padding: 2px 6px !important;
+  font-size: 12px !important;
+}
+
+.chat-empty-state {
+  text-align: center;
+  padding: 50px 20px;
+}
+.chat-empty-icon {
+  font-size: 38px;
+  margin-bottom: 10px;
+}
+.chat-empty-title {
+  font-size: 17px;
+  font-weight: 700;
+  color: #f1f5f9;
+  margin-bottom: 6px;
+}
+.chat-empty-desc {
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.6;
+  max-width: 320px;
+  margin: 0 auto 16px;
+}
+.chat-suggestions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: 320px;
+  margin: 0 auto;
+}
+.suggestion-chip {
+  background: #101830;
+  border: 1px solid #202d50;
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-size: 11.5px;
+  color: #94a3b8;
+  text-align: left;
+}
+
+/* Source citations */
+.sources-container-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 14px 0 6px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+.sources-title {
+  font-size: 10.5px;
+  font-weight: 800;
+  letter-spacing: 0.8px;
+  text-transform: uppercase;
+  color: #818cf8;
+}
+.sources-count {
+  font-size: 10px;
+  background: rgba(99, 102, 241, 0.16);
+  color: #a5b4fc;
+  padding: 2px 7px;
+  border-radius: 999px;
+  font-weight: 700;
+}
+.source-card-wrap {
+  margin-top: 6px;
+  margin-bottom: 4px;
+}
+.source-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 2px;
+}
+.source-badge-pill {
+  font-size: 10px;
+  font-weight: 700;
+  color: #818cf8;
+  letter-spacing: 0.5px;
+}
+.source-active-pill {
+  font-size: 9px;
+  font-weight: 800;
+  color: #fbbf24;
+  background: rgba(251, 191, 36, 0.16);
+  border: 1px solid rgba(251, 191, 36, 0.4);
+  padding: 2px 6px;
+  border-radius: 999px;
+}
+.source-preview {
+  color: #cbd5e1;
+  font-size: 11.5px;
+  line-height: 1.65;
+  padding: 8px 12px;
+  border-left: 3px solid #6366f1;
+  background: rgba(14, 21, 41, 0.8);
+  border-radius: 0 8px 8px 0;
+  margin-top: 4px;
+  margin-bottom: 10px;
+}
+
+/* Chat Input Bar */
+[data-testid="stChatInput"] {
+  padding-top: 8px;
+}
+[data-testid="stChatInput"] textarea {
+  background: #0c1328 !important;
+  color: #f8fafc !important;
+  border: 1px solid #233156 !important;
+  border-radius: 12px !important;
+  font-size: 13.5px !important;
+  padding: 12px 14px !important;
+}
+[data-testid="stChatInput"] textarea:focus {
+  border-color: #6366f1 !important;
+  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.25) !important;
+}
+
+/* Global button styling */
+.stButton > button {
+  background: #111a33;
+  color: #dbe3f3;
+  border: 1px solid #253358;
+  border-radius: 8px;
+  font-weight: 600;
+  min-height: 36px;
+  transition: all 0.15s ease;
+}
+.stButton > button:hover {
+  background: #192548;
+  color: #ffffff;
+  border-color: #6366f1;
+}
+.stButton > button[kind="primary"] {
+  background: linear-gradient(135deg, #6366f1, #8b5cf6) !important;
+  border: 1px solid rgba(255, 255, 255, 0.15) !important;
+  color: #ffffff !important;
+  box-shadow: 0 2px 12px rgba(99, 102, 241, 0.35);
+}
+.stButton > button[kind="primary"]:hover {
+  background: linear-gradient(135deg, #4f46e5, #7c3aed) !important;
+  box-shadow: 0 4px 16px rgba(99, 102, 241, 0.5);
+}
+
+/* Global overflow and production layout hardening */
+html, body, #root, [data-testid="stAppViewContainer"], [data-testid="stAppViewBlockContainer"] {
+  max-width: 100% !important;
+  overflow-x: hidden !important;
+}
+[data-testid="stMainBlockContainer"], .block-container {
+  width: 100% !important;
+  max-width: 100% !important;
+  box-sizing: border-box !important;
+  overflow-x: hidden !important;
+}
+[data-testid="stHorizontalBlock"] {
+  max-width: 100% !important;
+  min-width: 0 !important;
+  box-sizing: border-box !important;
+}
+[data-testid="stColumn"] {
+  min-width: 0 !important;
+  max-width: 100% !important;
+  box-sizing: border-box !important;
+}
+iframe {
+  max-width: 100% !important;
+  border: 0 !important;
+}
+
+/* Native workspace header */
+.workspace-native-header {
+  background: linear-gradient(135deg, rgba(15,23,48,.96), rgba(10,16,34,.96));
+  border: 1px solid rgba(99,102,241,.24);
+  border-radius: 16px;
+  padding: 14px 16px;
+  margin: 0 0 18px 0;
+  box-shadow: 0 12px 35px rgba(0,0,0,.25), inset 0 1px 0 rgba(255,255,255,.035);
+}
+.workspace-native-label {
+  color: #818cf8;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 1.25px;
+  text-transform: uppercase;
+  margin-bottom: 3px;
+}
+.workspace-native-name {
+  color: #f8fafc;
+  font-size: 15px;
+  font-weight: 750;
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.workspace-native-meta {
+  color: #64748b;
+  font-size: 11px;
+  margin-top: 3px;
+}
+.workspace-native-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 9px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+  border: 1px solid rgba(255,255,255,.08);
+  background: rgba(255,255,255,.035);
+  color: #cbd5e1;
+}
+.workspace-native-chip.drive {
+  color: #7dd3fc;
+  background: rgba(56,189,248,.08);
+  border-color: rgba(56,189,248,.22);
+}
+.workspace-native-chip.local {
+  color: #a5b4fc;
+  background: rgba(99,102,241,.08);
+  border-color: rgba(99,102,241,.22);
+}
+.workspace-native-chip.ready {
+  color: #6ee7b7;
+  background: rgba(16,185,129,.08);
+  border-color: rgba(16,185,129,.22);
+}
+.workspace-native-chip .dot {
+  width: 6px; height: 6px; border-radius: 50%; background: currentColor;
+}
+.workspace-native-divider {
+  height: 1px;
+  background: rgba(255,255,255,.06);
+  margin: 10px 0;
+}
+
+/* Cleaner native Streamlit controls */
+[data-testid="stNumberInput"] input,
+[data-testid="stTextInput"] input,
+[data-testid="stSelectbox"] [data-baseweb="select"] > div {
+  background: #0d152b !important;
+  color: #f8fafc !important;
+  border-color: #253358 !important;
+}
+
+/* Responsive adjustment */
+@media (max-width: 991px) {
+  .block-container {
+    padding-left: 1rem !important;
+    padding-right: 1rem !important;
+  }
+  .workspace-header-bar {
+    flex-direction: column;
+    align-items: flex-start;
+  }
 }
 """
 
 st.markdown(
-    f"""<style>{APP_CSS}</style>""",
+    f"<style>{APP_CSS}</style>",
     unsafe_allow_html=True,
 )
 
@@ -353,6 +978,13 @@ DEFAULT_STATE = {
     "upload_key": 0,
     "total_pages": 0,
     "total_chunks": 0,
+    "drive_status": None,
+    "drive_files": [],
+    "drive_search_query": "",
+    "drive_loaded": False,
+    "drive_error": None,
+    "drive_browser_open": False,
+    "selected_drive_file_id": None,
 }
 
 for key, value in DEFAULT_STATE.items():
@@ -553,6 +1185,342 @@ def activate_document(document: dict):
     elif any(filename_lower.endswith(ext) for ext in (".png", ".jpg", ".jpeg", ".webp")):
         st.session_state.image_bytes = fetch_selected_document_bytes(document_id)
 
+
+
+# ============================================================================
+# GOOGLE DRIVE API & HELPERS
+# ============================================================================
+
+def fetch_drive_status():
+    try:
+        response = requests.get(f"{BACKEND_URL}/api/drive/status", timeout=15)
+        if response.ok:
+            data = response.json()
+            st.session_state.drive_status = data
+            return data
+    except Exception as err:
+        LOGGER.warning("Could not fetch Google Drive status: %s", err)
+        st.session_state.drive_status = {
+            "connected": False,
+            "authenticated": False,
+            "message": f"Backend connection error: {err}",
+        }
+    return st.session_state.drive_status
+
+
+def fetch_drive_files(query: str = ""):
+    try:
+        params = {}
+        if query and query.strip():
+            params["query"] = query.strip()
+        response = requests.get(f"{BACKEND_URL}/api/drive/files", params=params, timeout=45)
+        if response.ok:
+            data = response.json()
+            st.session_state.drive_files = data.get("files", [])
+            st.session_state.drive_error = None
+            st.session_state.drive_loaded = True
+            return data.get("files", [])
+        else:
+            err_msg = "Failed to list Google Drive files."
+            try:
+                err_msg = response.json().get("detail", err_msg)
+            except Exception:
+                pass
+            st.session_state.drive_error = err_msg
+    except Exception as err:
+        LOGGER.error("Error fetching Google Drive files: %s", err)
+        st.session_state.drive_error = f"Error communicating with Drive: {err}"
+    return []
+
+
+def import_drive_file(file_item: dict):
+    file_id = file_item.get("id")
+    filename = file_item.get("name")
+    mime_type = file_item.get("mime_type", "")
+
+    with st.spinner(f"Importing & indexing '{filename}' from Google Drive..."):
+        try:
+            payload = {
+                "file_id": file_id,
+                "filename": filename,
+                "mime_type": mime_type,
+            }
+            response = requests.post(f"{BACKEND_URL}/api/drive/import", json=payload, timeout=240)
+            if response.ok:
+                result = response.json()
+                document_id = result.get("document_id")
+
+                if result.get("is_duplicate"):
+                    st.info(f"'{filename}' is already in your workspace.")
+                else:
+                    st.success(f"'{filename}' imported successfully!")
+
+                # Refresh workspace documents
+                refresh_documents()
+
+                # Activate the imported document
+                for doc in st.session_state.documents:
+                    if doc.get("document_id") == document_id:
+                        activate_document(doc)
+                        break
+
+                load_conversations()
+                if not result.get("is_duplicate"):
+                    start_new_chat()
+
+                st.session_state.documents_needs_refresh = True
+                st.rerun()
+            else:
+                err_detail = "Import failed."
+                try:
+                    err_detail = response.json().get("detail", err_detail)
+                except Exception:
+                    err_detail = response.text or err_detail
+                st.error(f"Google Drive import error: {err_detail}")
+        except Exception as err:
+            st.error(f"Failed to import from Google Drive: {err}")
+
+
+def _render_selected_drive_file_card(file_item: dict):
+    file_id = file_item.get("id")
+    name = file_item.get("name", "Unnamed file")
+    mime = file_item.get("mime_type", "")
+    ext = Path(name).suffix.lower()
+    is_supported = file_item.get("is_supported", False)
+    is_imported = file_item.get("is_imported", False)
+    imported_doc_id = file_item.get("imported_document_id")
+
+    # Determine badge label
+    if file_item.get("is_gdoc") or mime == "application/vnd.google-apps.document":
+        badge = "📑 Google Doc → PDF"
+    elif ext == ".pdf" or mime == "application/pdf":
+        badge = "📄 PDF Document"
+    elif ext == ".docx" or "wordprocessing" in mime:
+        badge = "📝 Word Document (DOCX)"
+    elif ext in (".png", ".jpg", ".jpeg", ".webp") or "image" in mime:
+        badge = f"🖼️ Image ({ext.upper().lstrip('.') or 'IMAGE'})"
+    else:
+        badge = f"📁 Unsupported ({ext or 'file'})"
+
+    modified = file_item.get("modified", "")
+    mod_str = f" · Modified: {modified[:10]}" if modified else ""
+
+    card_border = "#10b981" if is_imported else ("#6366f1" if is_supported else "#ef4444")
+    card_bg = "rgba(16, 185, 129, 0.08)" if is_imported else ("rgba(99, 102, 241, 0.08)" if is_supported else "rgba(239, 68, 68, 0.08)")
+
+    st.markdown(
+        f"""
+        <div style="
+            background:{card_bg};
+            border:1px solid {card_border};
+            border-radius:10px;
+            padding:10px 12px;
+            margin-top:8px;
+            margin-bottom:8px;
+        ">
+            <div style="font-size:12.5px;font-weight:600;color:#f1f5f9;word-break:break-word;line-height:1.4;">
+                {escape_html(name)}
+            </div>
+            <div style="font-size:10.5px;color:#a5b4fc;margin-top:4px;">
+                {escape_html(badge)}{escape_html(mod_str)}
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    if is_imported:
+        st.markdown(
+            """
+            <div style="font-size:11.5px;color:#86efac;margin-bottom:6px;font-weight:500;">
+                ✓ In Workspace
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        if st.button("Use", key=f"use_drive_selected_{file_id}", use_container_width=True, type="primary"):
+            for doc in st.session_state.documents:
+                if doc.get("document_id") == imported_doc_id or doc.get("google_drive_file_id") == file_id:
+                    activate_document(doc)
+                    break
+            st.session_state.drive_browser_open = False
+            st.rerun()
+    elif is_supported:
+        if st.button("📥 Import & Process", key=f"import_drive_selected_{file_id}", use_container_width=True, type="primary"):
+            import_drive_file(file_item)
+    else:
+        st.markdown(
+            """
+            <div style="font-size:11px;color:#fca5a5;margin-bottom:6px;">
+                ⚠️ Unsupported format. DocuMind AI supports PDF, DOCX, Images, and Google Docs.
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        st.button("📥 Import & Process", key=f"import_drive_dis_{file_id}", use_container_width=True, disabled=True)
+
+
+def render_google_drive_section():
+    # Fetch status if not yet loaded
+    if st.session_state.drive_status is None:
+        fetch_drive_status()
+
+    drive_status = st.session_state.drive_status or {}
+    is_connected = drive_status.get("connected", False)
+    is_authenticated = drive_status.get("authenticated", False)
+    identity = drive_status.get("identity") or drive_status.get("display_name")
+
+    if is_connected and is_authenticated:
+        st.markdown(
+            f"""
+            <div style="
+                display:flex;
+                align-items:center;
+                gap:7px;
+                padding:6px 10px;
+                background:rgba(16, 185, 129, 0.12);
+                border:1px solid rgba(16, 185, 129, 0.3);
+                border-radius:8px;
+                margin-bottom:10px;
+                font-size:11px;
+                color:#6ee7b7;
+            ">
+                <span style="width:7px;height:7px;background:#10b981;border-radius:50%;display:inline-block;"></span>
+                <span><strong>Connected:</strong> {escape_html(identity or 'Google Account')}</span>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+    elif is_connected and not is_authenticated:
+        st.warning("Google Drive connected, but authentication token is missing or expired.")
+        return
+    else:
+        st.error(f"Drive MCP server unavailable: {drive_status.get('message', 'Not connected')}")
+        return
+
+    # Check if the browser UI is currently open
+    browser_open = st.session_state.get("drive_browser_open", False)
+
+    if not browser_open:
+        # Check if a file was previously selected
+        selected_file = None
+        selected_id = st.session_state.get("selected_drive_file_id")
+        drive_files = st.session_state.get("drive_files", [])
+        if selected_id and drive_files:
+            for f in drive_files:
+                if f.get("id") == selected_id:
+                    selected_file = f
+                    break
+
+        if selected_file:
+            _render_selected_drive_file_card(selected_file)
+            if st.button("🔍 Change / Browse Google Drive", key="open_drive_browse_btn", use_container_width=True):
+                st.session_state.drive_browser_open = True
+                if not st.session_state.drive_loaded:
+                    fetch_drive_files(st.session_state.drive_search_query)
+                st.rerun()
+        else:
+            st.caption("Select a document from your Google Drive to import into DocuMind AI.")
+            if st.button("🔍 Browse Google Drive", key="open_drive_browse_btn", use_container_width=True, type="primary"):
+                st.session_state.drive_browser_open = True
+                if not st.session_state.drive_loaded:
+                    fetch_drive_files(st.session_state.drive_search_query)
+                st.rerun()
+        return
+
+    # Browser UI is OPEN
+    top_col1, top_col2 = st.columns([3, 1])
+    with top_col1:
+        st.markdown("<div style='font-size:12px;font-weight:600;color:#c7d2fe;padding-top:4px;'>🔍 Google Drive Explorer</div>", unsafe_allow_html=True)
+    with top_col2:
+        if st.button("✕ Close", key="close_drive_browse_btn", use_container_width=True):
+            st.session_state.drive_browser_open = False
+            st.rerun()
+
+    # Search and refresh bar
+    search_col, btn_col = st.columns([4, 1])
+    with search_col:
+        search_query = st.text_input(
+            "Search Drive",
+            value=st.session_state.drive_search_query,
+            placeholder="Search by filename...",
+            label_visibility="collapsed",
+            key="drive_search_box",
+        )
+    with btn_col:
+        if st.button("🔄", key="refresh_drive_btn", help="Refresh Google Drive files"):
+            st.session_state.drive_search_query = search_query
+            fetch_drive_files(search_query)
+            st.rerun()
+
+    if search_query != st.session_state.drive_search_query:
+        st.session_state.drive_search_query = search_query
+        fetch_drive_files(search_query)
+
+    # Initial file load when opened
+    if not st.session_state.drive_loaded:
+        fetch_drive_files(st.session_state.drive_search_query)
+
+    if st.session_state.drive_error:
+        st.caption(f"⚠️ {st.session_state.drive_error}")
+
+    drive_files = st.session_state.drive_files or []
+
+    if not drive_files:
+        if st.session_state.drive_loaded:
+            st.caption("No files found matching your query in Google Drive.")
+        return
+
+    def _file_display_name(file_item: dict) -> str:
+        name = file_item.get("name", "Unnamed file")
+        mime = file_item.get("mime_type", "")
+        ext = Path(name).suffix.lower()
+        is_imported = file_item.get("is_imported", False)
+        is_supported = file_item.get("is_supported", False)
+
+        if file_item.get("is_gdoc") or mime == "application/vnd.google-apps.document":
+            icon = "📑 [G-Doc]"
+        elif ext == ".pdf" or mime == "application/pdf":
+            icon = "📄 [PDF]"
+        elif ext == ".docx" or "wordprocessing" in mime:
+            icon = "📝 [DOCX]"
+        elif ext in (".png", ".jpg", ".jpeg", ".webp") or "image" in mime:
+            icon = "🖼️ [Image]"
+        else:
+            icon = "📁 [Other]"
+
+        status_tag = ""
+        if is_imported:
+            status_tag = " · ✓ In Workspace"
+        elif not is_supported:
+            status_tag = " · ⚠️ Unsupported"
+
+        return f"{icon} {name}{status_tag}"
+
+    current_selected_id = st.session_state.get("selected_drive_file_id")
+    current_index = 0
+    if current_selected_id:
+        for idx, f in enumerate(drive_files):
+            if f.get("id") == current_selected_id:
+                current_index = idx
+                break
+
+    selected_file = st.selectbox(
+        "Select Google Drive file",
+        options=drive_files,
+        index=current_index,
+        format_func=_file_display_name,
+        key="drive_file_selectbox",
+        label_visibility="collapsed",
+    )
+
+    if selected_file:
+        st.session_state.selected_drive_file_id = selected_file.get("id")
+        _render_selected_drive_file_card(selected_file)
+
+    if st.button("✓ Done Browsing", key="done_browsing_drive_btn", use_container_width=True):
+        st.session_state.drive_browser_open = False
+        st.rerun()
 
 
 # ============================================================================
@@ -1009,8 +1977,7 @@ def _padded_rect(rect: fitz.Rect, pad: float) -> fitz.Rect:
 def find_best_matching_block(page, source_text):
     """
     Finds the block with the highest text overlap against the
-    normalized source_text and estimates a confidence score between
-    0.0 and 1.0 (min of block coverage and source coverage).
+    normalized source_text and estimates a confidence score.
 
     Returns (blocks, matched_index, confidence).  matched_index is -1
     when no reliable match exists.
@@ -1038,7 +2005,7 @@ def find_best_matching_block(page, source_text):
 
         block_ratio = overlap / len(block_words)
         source_ratio = overlap / len(source_words)
-        score = (block_ratio + source_ratio) / 2.0
+        score = (0.7 * block_ratio) + (0.3 * source_ratio)
 
         if score > best_score or (score == best_score
                                   and overlap > best_overlap):
@@ -1051,14 +2018,14 @@ def find_best_matching_block(page, source_text):
     if best_index < 0:
         return blocks, -1, 0.0
 
-    confidence = min(best_block_ratio, best_source_ratio)
+    confidence = best_block_ratio
     matched_is_heading = is_heading(blocks[best_index]["raw"])
 
     if matched_is_heading:
-        reliable = best_overlap >= 2 and best_block_ratio >= 0.6
+        reliable = best_overlap >= 2 and best_block_ratio >= 0.5
     else:
         reliable = (best_overlap >= MIN_ANCHOR_WORDS
-                    and confidence >= CONFIDENCE_MIN)
+                    and (best_block_ratio >= 0.35 or best_source_ratio >= 0.20))
 
     if not reliable:
         return blocks, -1, confidence
@@ -1093,24 +2060,79 @@ def get_related_heading(blocks, matched_index):
 def find_source_rectangles(page,
                            source_text: str) -> list[fitz.Rect]:
     """
-    Strict section-level highlight matcher.
-
-    1.  Finds the block with the highest text overlap against the
-        source (find_best_matching_block).
-    2.  When the matched block is a paragraph, returns its rectangle
-        together with the heading directly above it (if any), plus any
-        directly connected continuation blocks of the same paragraph
-        that still contain source words.
-    3.  When the matched block is a heading, returns the heading and
-        the directly following paragraph only.
-
-    Returns [] when no reliable match exists; it never falls back to
-    whole-page or whole-section highlighting.
+    Finds exact line-level or sentence-level highlight rectangles on the page.
+    1. First tries exact sentence / phrase searches using PyMuPDF page.search_for()
+       with sliding-window matching for long or multi-line citations.
+    2. Falls back to block-level overlap matching if text extraction variations
+       prevent exact match.
+    Never highlights the entire page or unrelated sections.
     """
     LOGGER.debug("find_source_rectangles start")
     if not source_text or page is None:
         return []
 
+    rects: list[fitz.Rect] = []
+
+    # 1. Exact sentence/phrase search via page.search_for()
+    cleaned_source = source_text.strip()
+    if len(cleaned_source) < 120:
+        clean_full = " ".join(cleaned_source.split())
+        r_list = page.search_for(clean_full)
+        if r_list:
+            rects.extend(r_list)
+
+    if not rects:
+        # Split into sentences or clauses
+        raw_chunks = re.split(r'(?<=[.!?])\s+|\n+', cleaned_source)
+        candidate_phrases = []
+        for s in raw_chunks:
+            c = " ".join(s.split()).strip()
+            # Strip leading bullet symbols or list numerals
+            c = re.sub(r'^[•\-\*\u25cf\uf0b7\ufffd\u2219\u25e6\u2023\u2043\u00b7·►▪\d+\.\s]+', '', c).strip()
+            if len(c) >= 10:
+                candidate_phrases.append(c)
+
+        for phrase in candidate_phrases:
+            # Try full phrase first
+            r_list = page.search_for(phrase)
+            if r_list:
+                rects.extend(r_list)
+            else:
+                # Sliding window of 5-8 words if phrase is broken across lines or formatted
+                words = phrase.split()
+                if len(words) >= 5:
+                    step = 4
+                    window_size = 6
+                    for i in range(0, len(words) - 3, step):
+                        sub = " ".join(words[i : i + window_size])
+                        if len(sub) >= 12:
+                            sub_r = page.search_for(sub)
+                            if sub_r:
+                                rects.extend(sub_r)
+
+    if rects:
+        # Deduplicate and slightly pad line rectangles
+        unique_rects: list[fitz.Rect] = []
+        for r in rects:
+            padded = fitz.Rect(r.x0 - 2.0, r.y0 - 1.5, r.x1 + 2.0, r.y1 + 1.5)
+            duplicate = False
+            for ex in unique_rects:
+                if abs(ex.y0 - padded.y0) < 3.0 and abs(ex.y1 - padded.y1) < 3.0:
+                    if ex.x0 <= padded.x0 + 2.0 and ex.x1 >= padded.x1 - 2.0:
+                        duplicate = True
+                        break
+                    elif padded.x0 <= ex.x0 + 2.0 and padded.x1 >= ex.x1 - 2.0:
+                        ex.x0 = min(ex.x0, padded.x0)
+                        ex.x1 = max(ex.x1, padded.x1)
+                        duplicate = True
+                        break
+            if not duplicate:
+                unique_rects.append(padded)
+
+        LOGGER.debug("find_source_rectangles: found %d exact/phrase rects", len(unique_rects))
+        return unique_rects
+
+    # 2. Fallback: block-level matching
     blocks, matched_index, confidence = find_best_matching_block(
         page, source_text
     )
@@ -1239,10 +2261,10 @@ def render_pdf_page(
             for rectangle in rectangles:
                 page.draw_rect(
                     rectangle,
-                    color=(0.2, 0.7, 1.0),
-                    fill=(0.25, 0.65, 1.0),
-                    width=1,
-                    fill_opacity=0.3,
+                    color=(0.92, 0.70, 0.0),
+                    fill=(1.0, 0.90, 0.20),
+                    width=1.0,
+                    fill_opacity=0.42,
                     overlay=True,
                 )
 
@@ -1318,7 +2340,12 @@ def render_sources(sources, message_id):
         return
 
     st.markdown(
-        '<div class="source-label">📌 Document sources</div>',
+        f"""
+        <div class="sources-container-header">
+            <span class="sources-title">📌 Sources & Citations</span>
+            <span class="sources-count">{len(sources)} reference{'s' if len(sources) != 1 else ''}</span>
+        </div>
+        """,
         unsafe_allow_html=True,
     )
 
@@ -1333,13 +2360,16 @@ def render_sources(sources, message_id):
         if file_type in ("png", "jpg", "jpeg", "webp"):
             btn_label = f"🔍 View Image Source · {source.get('filename') or 'Image'}"
             btn_help = "Highlight the exact source text region in the image"
+            page_badge_text = "Image Source"
         elif file_type == "docx":
             btn_label = f"📖 Open source · {title or 'Section'}"
             btn_help = "Inspect source section text"
+            page_badge_text = title or "DOCX Section"
         else:
             p_label = f"Page {page_number}" if page_number is not None else (title or "Source")
             btn_label = f"📖 Open source · {p_label}"
             btn_help = "Navigate to this page and highlight the exact source text"
+            page_badge_text = f"Page {page_number}" if page_number is not None else "Document Source"
 
         source_key = f"source_{message_id}_{source_index}"
         is_active = (
@@ -1347,6 +2377,21 @@ def render_sources(sources, message_id):
         )
 
         button_type = "primary" if is_active else "secondary"
+
+        active_card_cls = " active-source-card" if is_active else ""
+        active_chip_html = '<span class="source-active-pill">● VIEWING</span>' if is_active else ''
+
+        st.markdown(
+            f"""
+            <div class="source-card-wrap{active_card_cls}">
+                <div class="source-card-header">
+                    <span class="source-badge-pill">📍 {escape_html(page_badge_text)}</span>
+                    {active_chip_html}
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
 
         if st.button(
             btn_label,
@@ -1491,19 +2536,90 @@ load_conversations()
 
 
 # ============================================================================
-# HEADER
+# WORKSPACE HEADER
 # ============================================================================
 
-st.markdown(
+def render_workspace_header():
+    """Render the workspace header using native Streamlit primitives.
+
+    The previous version used one large custom HTML fragment. Keeping the header
+    native avoids HTML leakage in Streamlit markdown while preserving the same
+    document/source/status information.
     """
-    <div class="brand-chip">📘</div>
-    <div class="main-title">DocuMind AI</div>
-    <div class="subtitle">
-        Understand your documents with intelligent AI-powered conversations.
-    </div>
-    """,
-    unsafe_allow_html=True,
-)
+    active_filename = st.session_state.get("filename")
+    active_doc = next(
+        (
+            doc for doc in st.session_state.documents
+            if doc.get("document_id") == st.session_state.document_id
+        ),
+        None,
+    ) if st.session_state.get("document_id") else None
+
+    is_drive = bool(
+        active_doc
+        and (
+            active_doc.get("source_type") == "google_drive"
+            or active_doc.get("google_drive_file_id")
+        )
+    )
+    file_type = str((active_doc or {}).get("file_type", "PDF")).upper()
+    page_count = st.session_state.get("total_pages") or 0
+    doc_count = len(st.session_state.get("documents", []))
+
+    drive_status = st.session_state.get("drive_status") or {}
+    drive_connected = bool(
+        drive_status.get("connected") and drive_status.get("authenticated")
+    )
+
+    st.markdown('<div class="workspace-native-header">', unsafe_allow_html=True)
+    left, center, right = st.columns([1.0, 2.3, 1.0], gap="medium", vertical_alignment="center")
+
+    with left:
+        st.markdown(
+            '<div class="workspace-native-label">Workspace</div>'
+            '<div class="workspace-native-name">📘 DocuMind AI</div>'
+            '<div class="workspace-native-meta">AI document intelligence</div>',
+            unsafe_allow_html=True,
+        )
+
+    with center:
+        if active_filename:
+            source_class = "drive" if is_drive else "local"
+            source_label = "☁ Google Drive" if is_drive else "● Local File"
+            meta = f"{page_count} pages" if page_count else file_type
+            safe_name = escape_html(truncate_display(active_filename, 48))
+            st.markdown(
+                f'<div class="workspace-native-label">Active document</div>'
+                f'<div class="workspace-native-name">{safe_name}</div>'
+                f'<div class="workspace-native-meta">'
+                f'<span class="workspace-native-chip {source_class}">{source_label}</span>'
+                f' &nbsp; {escape_html(meta)}'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
+        else:
+            st.markdown(
+                '<div class="workspace-native-label">Active document</div>'
+                '<div class="workspace-native-name">No document selected</div>'
+                '<div class="workspace-native-meta">Upload a file or import one from Google Drive</div>',
+                unsafe_allow_html=True,
+            )
+
+    with right:
+        status_class = "ready" if drive_connected else "ready"
+        status_label = "Drive Connected" if drive_connected else "Ready"
+        st.markdown(
+            f'<div style="text-align:right">'
+            f'<span class="workspace-native-chip {status_class}"><span class="dot"></span>{status_label}</span>'
+            f'<div class="workspace-native-meta">{doc_count} document{"s" if doc_count != 1 else ""} in workspace</div>'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
+
+    st.markdown('</div>', unsafe_allow_html=True)
+
+
+render_workspace_header()
 
 
 # ============================================================================
@@ -1513,32 +2629,33 @@ st.markdown(
 with st.sidebar:
     st.markdown(
         """
-        <div class="sidebar-brand">
-            <div class="sidebar-brand-icon">📘</div>
-            <div>DocuMind AI</div>
-        </div>
-        <div class="sidebar-caption">
-            Your intelligent document workspace.
-            Upload files and chat with your knowledge base.
+        <div class="sidebar-brand-wrapper">
+            <div class="sidebar-logo">📘</div>
+            <div>
+                <div class="sidebar-brand-title">DocuMind AI</div>
+                <div class="sidebar-brand-desc">AI-powered document workspace</div>
+            </div>
         </div>
         """,
         unsafe_allow_html=True,
     )
 
     if st.button(
-        "＋ New chat",
+        "＋ New Chat",
+        key="new_chat_sidebar_btn",
         use_container_width=True,
+        type="primary",
     ):
         start_new_chat()
         st.rerun()
 
     st.markdown(
-        '<div class="sidebar-section">Chats</div>',
+        '<div class="sidebar-section-header"><span>CHATS</span></div>',
         unsafe_allow_html=True,
     )
 
     if st.session_state.conversations:
-        with st.container(height=300):
+        with (st.container(height=240) if len(st.session_state.conversations) > 4 else st.container()):
             for conversation in st.session_state.conversations:
                 conversation_id = conversation.get("conversation_id")
 
@@ -1546,16 +2663,17 @@ with st.sidebar:
                     continue
 
                 title = conversation.get("title") or "New chat"
-                display_title = truncate_display(title, 34)
+                display_title = truncate_display(title, 26)
                 is_active = (
                     conversation_id == st.session_state.conversation_id
                 )
 
-                chat_col, menu_col = st.columns([5, 1])
+                chat_col, menu_col = st.columns([4.2, 1.2])
 
                 with chat_col:
+                    chat_btn_label = f"💬 {display_title}"
                     if st.button(
-                        display_title,
+                        chat_btn_label,
                         key=f"chat_{conversation_id}",
                         use_container_width=True,
                         type="primary" if is_active else "secondary",
@@ -1593,32 +2711,132 @@ with st.sidebar:
                         ):
                             delete_conversation(conversation_id)
     else:
-        st.caption("No chats yet. Start a new conversation.")
+        st.caption("No conversations yet. Start a new chat.")
 
     st.markdown(
-        '<div class="sidebar-section">Documents</div>',
+        '<div class="sidebar-section-header"><span>DOCUMENTS</span></div>',
         unsafe_allow_html=True,
     )
 
-    upload_key = f"file_uploader_{st.session_state.upload_key}"
+    if st.session_state.documents:
+        with (st.container(height=240) if len(st.session_state.documents) > 2 else st.container()):
+            for document in st.session_state.documents:
+                document_id = document.get("document_id")
 
-    uploaded_files = st.file_uploader(
-        "Choose PDF, DOCX, or Image (PNG, JPG, WEBP)",
-        type=["pdf", "docx", "png", "jpg", "jpeg", "webp"],
-        accept_multiple_files=True,
-        key=upload_key,
-    )
+                if not document_id:
+                    continue
 
-    if uploaded_files:
+                filename = document.get("filename", "Document")
+                is_active = document_id == st.session_state.document_id
+                card_class = "sidebar-doc-card active" if is_active else "sidebar-doc-card"
+
+                file_type = str(document.get("file_type", "file")).lower()
+                is_drive = document.get("source_type") == "google_drive" or bool(document.get("google_drive_file_id"))
+
+                if is_drive:
+                    source_label = "Google Drive"
+                else:
+                    source_label = "Local"
+
+                if file_type in ("png", "jpg", "jpeg", "webp"):
+                    doc_glyph = "🖼️"
+                    meta_label = f"{file_type.upper()} · {source_label}"
+                elif file_type == "docx":
+                    doc_glyph = "📝"
+                    meta_label = f"DOCX · {source_label}"
+                else:
+                    doc_glyph = "📄"
+                    total_p = document.get('total_pages', 0)
+                    meta_label = f"PDF · {total_p}p · {source_label}"
+
+                active_pill = '<span class="doc-active-pill">SELECTED</span>' if is_active else ''
+
+                st.markdown(
+                    f"""
+                    <div class="{card_class}">
+                        <div class="sidebar-doc-top">
+                            <span class="sidebar-doc-glyph">{doc_glyph}</span>
+                            <div class="sidebar-doc-info">
+                                <div class="sidebar-doc-name" title="{escape_html(filename)}">{escape_html(truncate_display(filename, 28))}</div>
+                                <div class="sidebar-doc-meta">{escape_html(meta_label)}</div>
+                            </div>
+                            {active_pill}
+                        </div>
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
+
+                doc_col1, doc_col2 = st.columns([1, 1])
+
+                with doc_col1:
+                    if not is_active:
+                        if st.button(
+                            "Select",
+                            key=f"use_document_{document_id}",
+                            use_container_width=True,
+                        ):
+                            activate_document(document)
+                            st.rerun()
+                    else:
+                        st.button(
+                            "Active",
+                            key=f"active_doc_btn_{document_id}",
+                            use_container_width=True,
+                            disabled=True,
+                        )
+
+                with doc_col2:
+                    if st.button(
+                        "Remove",
+                        key=f"remove_document_{document_id}",
+                        use_container_width=True,
+                    ):
+                        delete_document(document_id)
+
         if st.button(
-            "Upload and process",
+            "Clear all documents",
+            key="clear_all_documents_btn",
             use_container_width=True,
         ):
-            upload_documents(uploaded_files)
+            clear_all_documents()
+    else:
+        st.caption("No documents in workspace yet.")
+
+    st.markdown(
+        '<div class="sidebar-section-header"><span>ADD DOCUMENT</span></div>',
+        unsafe_allow_html=True,
+    )
+
+    tab_local, tab_drive = st.tabs(["📁 Local Files", "☁️ Google Drive"])
+
+    with tab_local:
+        upload_key = f"file_uploader_{st.session_state.upload_key}"
+
+        uploaded_files = st.file_uploader(
+            "Choose files",
+            type=["pdf", "docx", "png", "jpg", "jpeg", "webp"],
+            accept_multiple_files=True,
+            key=upload_key,
+            help="Supported: PDF, DOCX, PNG, JPG, WEBP",
+            label_visibility="collapsed",
+        )
+
+        if uploaded_files:
+            if st.button(
+                "Upload and process",
+                key="upload_local_btn",
+                use_container_width=True,
+                type="primary",
+            ):
+                upload_documents(uploaded_files)
+
+    with tab_drive:
+        render_google_drive_section()
 
     if st.session_state.upload_statuses:
         st.markdown(
-            '<div class="sidebar-section">Upload status</div>',
+            '<div class="sidebar-section-header"><span>UPLOAD STATUS</span></div>',
             unsafe_allow_html=True,
         )
 
@@ -1626,117 +2844,47 @@ with st.sidebar:
             status = item.get("status", "Pending")
 
             status_color = {
-                "Uploaded": "#86efac",
-                "Already uploaded": "#facc15",
-                "Failed": "#fca5a5",
-                "Pending": "#cbd5e1",
-            }.get(status, "#cbd5e1")
+                "Uploaded": "#10b981",
+                "Already uploaded": "#f59e0b",
+                "Failed": "#ef4444",
+                "Pending": "#94a3b8",
+            }.get(status, "#94a3b8")
 
             st.markdown(
                 f"""
                 <div style="
-                    padding:8px 10px;
+                    padding:7px 10px;
                     border-left:3px solid {status_color};
-                    border-radius:7px;
-                    background:rgba(15,23,42,0.55);
-                    margin-bottom:7px;
+                    border-radius:6px;
+                    background:rgba(15,23,42,0.65);
+                    margin-bottom:6px;
                     font-size:11px;
                 ">
-                    {escape_html(item.get("name", "Unknown file"))}
-                    <br>
-                    <strong>{escape_html(status)}</strong>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
-
-    if st.session_state.documents:
-        for document in st.session_state.documents:
-            document_id = document.get("document_id")
-
-            if not document_id:
-                continue
-
-            filename = document.get("filename", "Document")
-            is_active = document_id == st.session_state.document_id
-            card_class = "doc-card active" if is_active else "doc-card"
-
-            file_type = str(document.get("file_type", "file")).lower()
-            if file_type in ("png", "jpg", "jpeg", "webp"):
-                type_badge = f"🖼️ {file_type.upper()} · OCR Ready"
-            elif file_type == "docx":
-                type_badge = "📝 DOCX · Document"
-            else:
-                type_badge = f"📄 {file_type.upper()} · {document.get('total_pages', 0)} pages"
-
-            st.markdown(
-                f"""
-                <div class="{card_class}">
-                    <div class="doc-name">
-                        {escape_html(filename)}
+                    <div style="font-weight:600;color:#f1f5f9;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
+                        {escape_html(item.get("name", "Unknown file"))}
                     </div>
-                    <div class="doc-meta">
-                        {escape_html(type_badge)}
+                    <div style="color:{status_color};font-size:10px;font-weight:700;margin-top:2px;">
+                        {escape_html(status)}
                     </div>
                 </div>
                 """,
                 unsafe_allow_html=True,
             )
-
-
-            document_col, remove_col = st.columns([1, 1])
-
-            with document_col:
-                if st.button(
-                    "Use",
-                    key=f"use_document_{document_id}",
-                    use_container_width=True,
-                ):
-                    activate_document(document)
-                    st.rerun()
-
-            with remove_col:
-                if st.button(
-                    "Remove",
-                    key=f"remove_document_{document_id}",
-                    use_container_width=True,
-                ):
-                    delete_document(document_id)
-
-        if st.button(
-            "Clear all documents",
-            use_container_width=True,
-        ):
-            clear_all_documents()
 
     if st.session_state.document_id:
         st.markdown(
-            '<div class="sidebar-section">Workspace</div>',
+            '<div class="sidebar-section-header"><span>WORKSPACE STATS</span></div>',
             unsafe_allow_html=True,
         )
-
-        st.markdown(
-            """
-            <div class="status-badge">
-                <span class="status-dot"></span>
-                Document ready
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-
-        st.caption(st.session_state.filename)
 
         metric_col1, metric_col2 = st.columns(2)
 
         with metric_col1:
             st.markdown(
                 f"""
-                <div class="metric-card">
-                    <div class="metric-label">Pages</div>
-                    <div class="metric-value">
-                        {st.session_state.total_pages or "—"}
-                    </div>
+                <div style="background:#0f172f;border:1px solid #1e2b4d;border-radius:8px;padding:8px 10px;text-align:center;">
+                    <div style="color:#64748b;font-size:10px;text-transform:uppercase;font-weight:700;">Pages</div>
+                    <div style="color:#f8fafc;font-size:18px;font-weight:800;margin-top:2px;">{st.session_state.total_pages or "—"}</div>
                 </div>
                 """,
                 unsafe_allow_html=True,
@@ -1745,44 +2893,43 @@ with st.sidebar:
         with metric_col2:
             st.markdown(
                 f"""
-                <div class="metric-card">
-                    <div class="metric-label">Chunks</div>
-                    <div class="metric-value">
-                        {st.session_state.total_chunks or "—"}
-                    </div>
+                <div style="background:#0f172f;border:1px solid #1e2b4d;border-radius:8px;padding:8px 10px;text-align:center;">
+                    <div style="color:#64748b;font-size:10px;text-transform:uppercase;font-weight:700;">Chunks</div>
+                    <div style="color:#f8fafc;font-size:18px;font-weight:800;margin-top:2px;">{st.session_state.total_chunks or "—"}</div>
                 </div>
                 """,
                 unsafe_allow_html=True,
             )
 
-        if st.button(
-            "Clear chat",
-            use_container_width=True,
-        ):
-            st.session_state.messages = []
-            clear_highlight()
-            st.session_state.pending_page = None
-            save_current_conversation()
-            st.rerun()
+        st.write("")
+        c_clear, c_reset = st.columns([1, 1])
+        with c_clear:
+            if st.button("Clear chat", key="clear_chat_sidebar_btn", use_container_width=True):
+                st.session_state.messages = []
+                clear_highlight()
+                st.session_state.pending_page = None
+                save_current_conversation()
+                st.rerun()
+        with c_reset:
+            if st.button("Reset All", key="reset_workspace_btn", use_container_width=True):
+                st.session_state.document_id = None
+                st.session_state.filename = None
+                st.session_state.documents = []
+                st.session_state.upload_key += 1
+                st.session_state.upload_statuses = []
+                st.session_state.processed_file_fingerprints = set()
+                reset_document_viewer()
+                st.session_state.documents_needs_refresh = True
+                st.rerun()
 
-        if st.button(
-            "Reset workspace",
-            use_container_width=True,
-        ):
-            st.session_state.document_id = None
-            st.session_state.filename = None
-            st.session_state.documents = []
-            st.session_state.upload_key += 1
-            st.session_state.upload_statuses = []
-            st.session_state.processed_file_fingerprints = set()
-            reset_document_viewer()
-            st.session_state.documents_needs_refresh = True
-            st.rerun()
-
-    st.divider()
-
-    st.caption("DocuMind AI")
-    st.caption("Powered by xAI Grok + FastAPI")
+    st.markdown(
+        """
+        <div style="margin-top:20px;padding-top:12px;border-top:1px solid rgba(255,255,255,0.06);font-size:10.5px;color:#475569;text-align:center;">
+            DocuMind AI · Enterprise Document Workspace
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
 
 # ============================================================================
@@ -1790,8 +2937,8 @@ with st.sidebar:
 # ============================================================================
 
 left_column, right_column = st.columns(
-    [1.08, 0.92],
-    gap="large",
+    [1.0, 1.0],
+    gap="medium",
 )
 
 
@@ -1800,17 +2947,46 @@ left_column, right_column = st.columns(
 # ============================================================================
 
 with left_column:
-    st.markdown(
-        '<div class="panel-title">📄 Document Viewer</div>',
-        unsafe_allow_html=True,
-    )
+    is_drive = False
+    if st.session_state.document_id:
+        for doc in st.session_state.documents:
+            if doc.get("document_id") == st.session_state.document_id:
+                is_drive = doc.get("source_type") == "google_drive" or bool(doc.get("google_drive_file_id"))
+                break
 
-    st.markdown(
-        '<div class="panel-sub">Read, navigate and inspect source references.</div>',
-        unsafe_allow_html=True,
-    )
+    if st.session_state.filename:
+        source_badge_text = "☁ Google Drive" if is_drive else "● Local"
+        source_badge_cls = "badge-drive" if is_drive else "badge-local"
+        pages_badge = f'<span class="panel-badge badge-pages">{st.session_state.total_pages} pages</span>' if st.session_state.total_pages else ''
+        st.markdown(
+            f"""
+            <div class="panel-header-wrap">
+                <div>
+                    <div class="panel-kicker">DOCUMENT VIEWER</div>
+                    <div class="panel-heading">{escape_html(truncate_display(st.session_state.filename, 42))}</div>
+                </div>
+                <div class="panel-badges">
+                    <span class="panel-badge {source_badge_cls}">{source_badge_text}</span>
+                    {pages_badge}
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+    else:
+        st.markdown(
+            """
+            <div class="panel-header-wrap">
+                <div>
+                    <div class="panel-kicker">DOCUMENT VIEWER</div>
+                    <div class="panel-heading">Document Canvas</div>
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
 
-    with st.container(height=760, border=True):
+    with st.container(height=720, border=True):
         if st.session_state.pdf_bytes:
             pdf_document = fitz.open(
                 stream=st.session_state.pdf_bytes,
@@ -1837,13 +3013,11 @@ with left_column:
                 ),
             )
 
-            nav_col, page_col, action_col = st.columns([1, 1.4, 1])
+            nav_prev_col, nav_page_col, nav_next_col, nav_hl_col = st.columns([1.1, 1.6, 1.1, 1.4])
 
-            with nav_col:
-                st.write("")
-
+            with nav_prev_col:
                 if st.button(
-                    "◀ Prev",
+                    "← Prev",
                     key="prev_page",
                     use_container_width=True,
                     disabled=current_page <= 1,
@@ -1851,21 +3025,20 @@ with left_column:
                     st.session_state.page_input = max(1, current_page - 1)
                     st.rerun()
 
-            with page_col:
+            with nav_page_col:
                 selected_page = st.number_input(
                     "Page",
                     min_value=1,
                     max_value=total_pages,
                     step=1,
                     key="page_input",
+                    label_visibility="collapsed",
                 )
                 st.session_state.current_page = int(selected_page)
 
-            with action_col:
-                st.write("")
-
+            with nav_next_col:
                 if st.button(
-                    "Next ▶",
+                    "Next →",
                     key="next_page",
                     use_container_width=True,
                     disabled=current_page >= total_pages,
@@ -1876,14 +3049,21 @@ with left_column:
                     )
                     st.rerun()
 
-            if st.session_state.highlight_text:
-                if st.button(
-                    "Clear highlight",
-                    key="clear_highlight_btn",
-                    use_container_width=True,
-                ):
-                    clear_highlight()
-                    st.rerun()
+            with nav_hl_col:
+                if st.session_state.highlight_text:
+                    if st.button(
+                        "✕ Clear",
+                        key="clear_highlight_btn",
+                        use_container_width=True,
+                        help="Clear active highlight",
+                    ):
+                        clear_highlight()
+                        st.rerun()
+                else:
+                    st.markdown(
+                        f'<div class="page-counter-badge">Page {current_page} of {total_pages}</div>',
+                        unsafe_allow_html=True,
+                    )
 
             page_image, highlight_applied = render_pdf_page(
                 pdf_bytes=st.session_state.pdf_bytes,
@@ -1891,23 +3071,33 @@ with left_column:
                 highlight_text=st.session_state.highlight_text,
             )
 
+            if st.session_state.highlight_text:
+                if highlight_applied:
+                    st.markdown(
+                        f"""
+                        <div class="source-highlight-banner active">
+                            <span>✨ Source section highlighted on <strong>Page {st.session_state.current_page}</strong></span>
+                        </div>
+                        """,
+                        unsafe_allow_html=True,
+                    )
+                else:
+                    st.markdown(
+                        f"""
+                        <div class="source-highlight-banner warning">
+                            <span>⚠️ Source text not found directly on Page {st.session_state.current_page}</span>
+                        </div>
+                        """,
+                        unsafe_allow_html=True,
+                    )
+
             if page_image:
+                st.markdown('<div class="pdf-canvas-wrapper"><div class="pdf-paper">', unsafe_allow_html=True)
                 st.image(
                     page_image,
                     use_container_width=True,
                 )
-
-            if st.session_state.highlight_text:
-                if highlight_applied:
-                    st.caption(
-                        f"✓ Source highlighted on page "
-                        f"{st.session_state.current_page}"
-                    )
-                else:
-                    st.caption(
-                        "The source section could not be located "
-                        "on this page."
-                    )
+                st.markdown('</div></div>', unsafe_allow_html=True)
 
         elif st.session_state.image_bytes or (
             st.session_state.filename
@@ -1924,21 +3114,23 @@ with left_column:
                     or st.session_state.get("selected_source_bbox")
                     or st.session_state.get("selected_source_bboxes")
                 )
-                if has_active_highlight:
-                    if st.button(
-                        "Clear highlight",
-                        key="clear_image_highlight_btn",
-                        use_container_width=True,
-                    ):
-                        clear_highlight()
-                        st.rerun()
-
-                show_all_ocr = st.checkbox(
-                    "Show all detected text regions",
-                    value=st.session_state.get("show_all_ocr_regions", False),
-                    key="toggle_all_ocr_regions",
-                )
-                st.session_state.show_all_ocr_regions = show_all_ocr
+                img_c1, img_c2 = st.columns([1, 1])
+                with img_c1:
+                    show_all_ocr = st.checkbox(
+                        "Show all OCR text regions",
+                        value=st.session_state.get("show_all_ocr_regions", False),
+                        key="toggle_all_ocr_regions",
+                    )
+                    st.session_state.show_all_ocr_regions = show_all_ocr
+                with img_c2:
+                    if has_active_highlight:
+                        if st.button(
+                            "✕ Clear highlight",
+                            key="clear_image_highlight_btn",
+                            use_container_width=True,
+                        ):
+                            clear_highlight()
+                            st.rerun()
 
                 orig_dims = st.session_state.get("selected_source_dimensions")
                 orig_w, orig_h = (None, None)
@@ -1969,10 +3161,6 @@ with left_column:
                 selected_boxes_json = json.dumps(selected_boxes or ([selected_box] if selected_box else []))
                 overall_box_json = json.dumps(selected_box or {})
                 all_ocr_boxes_json = json.dumps(all_boxes if show_all_ocr else [])
-
-                LOGGER.info("[DocuMind Frontend Image Viewer] Filename: %s, Dimensions: %sx%s", st.session_state.filename, orig_w, orig_h)
-                LOGGER.info("[DocuMind Frontend Image Viewer] Selected bbox: %s", selected_box)
-                LOGGER.info("[DocuMind Frontend Image Viewer] Selected bboxes count: %d", len(selected_boxes))
 
                 aspect_ratio = orig_h / max(1, orig_w)
                 estimated_height = int(680 * aspect_ratio) + 25
@@ -2064,15 +3252,9 @@ with left_column:
     const scaleX = dispW / origW;
     const scaleY = dispH / origH;
 
-    console.log('[DocuMind Client] Original dimensions:', origW, origH);
-    console.log('[DocuMind Client] Displayed dimensions:', dispW, dispH);
-    console.log('[DocuMind Client] Scale factors: scaleX=' + scaleX + ', scaleY=' + scaleY);
-    console.log('[DocuMind Client] Selected boxes:', selectedBoxes);
-
     svg.innerHTML = '';
     svg.setAttribute('viewBox', '0 0 ' + dispW + ' ' + dispH);
 
-    // 1. Draw all OCR boxes if toggled on
     if (allOcrBoxes && allOcrBoxes.length > 0) {{
       allOcrBoxes.forEach(function(b) {{
         const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
@@ -2087,7 +3269,6 @@ with left_column:
 
     let firstSourceEl = null;
 
-    // 2. Draw individual matched source boxes
     if (selectedBoxes && selectedBoxes.length > 0) {{
       selectedBoxes.forEach(function(b, idx) {{
         const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
@@ -2105,7 +3286,6 @@ with left_column:
         if (!firstSourceEl) firstSourceEl = rect;
       }});
 
-      // 3. Enclosing border if multiple boxes
       if (overallBox && overallBox.x !== undefined && selectedBoxes.length > 1) {{
         const enc = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
         const padX = 4 * scaleX;
@@ -2119,7 +3299,6 @@ with left_column:
       }}
     }}
 
-    // 4. Scroll to highlighted region smoothly
     if (firstSourceEl) {{
       const targetY = parseFloat(firstSourceEl.getAttribute('y')) || 0;
       window.scrollTo({{ top: Math.max(0, targetY - 60), behavior: 'smooth' }});
@@ -2146,16 +3325,16 @@ with left_column:
                     st.markdown(
                         f"""
                         <div style="
-                            margin-top: 4px;
-                            margin-bottom: 12px;
-                            padding: 9px 13px;
+                            margin-top: 6px;
+                            margin-bottom: 10px;
+                            padding: 8px 12px;
                             border-radius: 8px;
                             background: rgba(99, 102, 241, 0.14);
                             border: 1px solid rgba(99, 102, 241, 0.35);
-                            font-size: 12.5px;
+                            font-size: 12px;
                             color: #c7d2fe;
                         ">
-                            ✓ <strong>Answer source highlighted in image</strong>{type_badge}{conf_badge}
+                            ✓ <strong>Source highlighted in image</strong>{type_badge}{conf_badge}
                         </div>
                         """,
                         unsafe_allow_html=True,
@@ -2164,13 +3343,13 @@ with left_column:
                     st.markdown(
                         """
                         <div style="
-                            margin-top: 4px;
-                            margin-bottom: 12px;
-                            padding: 9px 13px;
+                            margin-top: 6px;
+                            margin-bottom: 10px;
+                            padding: 8px 12px;
                             border-radius: 8px;
                             background: rgba(239, 68, 68, 0.12);
                             border: 1px solid rgba(239, 68, 68, 0.35);
-                            font-size: 12.5px;
+                            font-size: 12px;
                             color: #fca5a5;
                         ">
                             ⚠️ <strong>Source location could not be identified in this image.</strong>
@@ -2182,16 +3361,16 @@ with left_column:
                     st.markdown(
                         """
                         <div style="
-                            margin-top: 4px;
-                            margin-bottom: 12px;
-                            padding: 9px 13px;
+                            margin-top: 6px;
+                            margin-bottom: 10px;
+                            padding: 8px 12px;
                             border-radius: 8px;
                             background: rgba(99, 102, 241, 0.10);
                             border: 1px solid rgba(99, 102, 241, 0.25);
-                            font-size: 12px;
+                            font-size: 11.5px;
                             color: #c7d2fe;
                         ">
-                            ✓ <strong>OCR text extracted & ready for chat</strong>: Click any source citation or ask questions about this image in the AI Assistant panel.
+                            ✓ <strong>OCR text extracted & indexed</strong>: Click any source citation or ask questions about this image in the AI Assistant panel.
                         </div>
                         """,
                         unsafe_allow_html=True,
@@ -2199,10 +3378,10 @@ with left_column:
             else:
                 st.markdown(
                     """
-                    <div class="empty-state">
-                        <div class="empty-icon">🖼️</div>
-                        <div class="empty-title">Image preview unavailable</div>
-                        <div class="empty-text">
+                    <div class="workspace-empty-card">
+                        <div class="empty-card-glyph">🖼️</div>
+                        <div class="empty-card-title">Image preview unavailable</div>
+                        <div class="empty-card-subtitle">
                             Preview unavailable / OCR text available.<br>
                             You can ask questions about this image in the chat panel.
                         </div>
@@ -2214,12 +3393,12 @@ with left_column:
         elif st.session_state.filename and st.session_state.filename.lower().endswith(".docx"):
             st.markdown(
                 """
-                <div class="empty-state">
-                    <div class="empty-icon">📄</div>
-                    <div class="empty-title">DOCX preview unavailable</div>
-                    <div class="empty-text">
-                        Preview unavailable / document text available.<br>
-                        Ask questions about this DOCX document in the chat panel.
+                <div class="workspace-empty-card">
+                    <div class="empty-card-glyph">📝</div>
+                    <div class="empty-card-title">Word Document Active</div>
+                    <div class="empty-card-subtitle">
+                        DOCX content extracted and fully indexed.<br>
+                        Ask questions in the AI Assistant panel to retrieve answers with section citations.
                     </div>
                 </div>
                 """,
@@ -2229,12 +3408,12 @@ with left_column:
         elif st.session_state.filename:
             st.markdown(
                 """
-                <div class="empty-state">
-                    <div class="empty-icon">📄</div>
-                    <div class="empty-title">Document ready</div>
-                    <div class="empty-text">
-                        Preview unavailable / text available.<br>
-                        This file is ready for chat.
+                <div class="workspace-empty-card">
+                    <div class="empty-card-glyph">📄</div>
+                    <div class="empty-card-title">Document Ready</div>
+                    <div class="empty-card-subtitle">
+                        Text extracted and indexed for Q&A.<br>
+                        Ask questions in the AI Assistant panel.
                     </div>
                 </div>
                 """,
@@ -2244,18 +3423,26 @@ with left_column:
         else:
             st.markdown(
                 """
-                <div class="empty-state">
-                    <div class="empty-icon">📚</div>
-                    <div class="empty-title">Your document workspace</div>
-                    <div class="empty-text">
-                        Upload a PDF, DOCX, or Image (PNG, JPG, WEBP) from the sidebar<br>
-                        to start reading and asking questions.
+                <div class="workspace-empty-card">
+                    <div class="empty-card-glyph">📚</div>
+                    <div class="empty-card-title">Your document workspace</div>
+                    <div class="empty-card-subtitle">
+                        Upload a document or import one from Google Drive to start asking questions.
+                    </div>
+                    <div class="empty-card-formats">
+                        <span class="format-pill">PDF</span>
+                        <span class="format-pill">DOCX</span>
+                        <span class="format-pill">PNG</span>
+                        <span class="format-pill">JPG</span>
+                        <span class="format-pill">WEBP</span>
+                    </div>
+                    <div class="empty-card-tip">
+                        💡 Features: OCR text detection, Semantic Search, Page Highlighting & Google Drive MCP
                     </div>
                 </div>
                 """,
                 unsafe_allow_html=True,
             )
-
 
 
 # ============================================================================
@@ -2264,25 +3451,52 @@ with left_column:
 
 with right_column:
     st.markdown(
-        '<div class="panel-title">🤖 AI Assistant</div>',
+        """
+        <div class="panel-header-wrap">
+            <div>
+                <div class="panel-kicker">AI ASSISTANT</div>
+                <div class="panel-heading">Ask questions about your document</div>
+            </div>
+            <div class="panel-badges">
+                <span class="panel-badge badge-ready"><span class="pulse-dot"></span> Ready</span>
+            </div>
+        </div>
+        """,
         unsafe_allow_html=True,
     )
 
-    st.markdown(
-        '<div class="panel-sub">Ask questions and explore your documents.</div>',
-        unsafe_allow_html=True,
-    )
-
-    with st.container(height=760, border=True):
+    with st.container(height=720, border=True):
         if not st.session_state.document_id:
             st.markdown(
                 """
-                <div class="empty-state">
-                    <div class="empty-icon">✨</div>
-                    <div class="empty-title">Start a conversation</div>
-                    <div class="empty-text">
-                        Upload your document and ask anything about it.<br>
-                        Try: "Give me a summary of this document."
+                <div class="chat-empty-state">
+                    <div class="chat-empty-icon">✨</div>
+                    <div class="chat-empty-title">Start a conversation</div>
+                    <div class="chat-empty-desc">
+                        Upload or select a document from the workspace to begin asking grounded questions with AI.
+                    </div>
+                    <div class="chat-suggestions">
+                        <div class="suggestion-chip">💡 "What is the main summary of this document?"</div>
+                        <div class="suggestion-chip">💡 "What are the key technical concepts?"</div>
+                    </div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+        elif not st.session_state.messages:
+            st.markdown(
+                f"""
+                <div class="chat-empty-state">
+                    <div class="chat-empty-icon">💬</div>
+                    <div class="chat-empty-title">Ready to assist</div>
+                    <div class="chat-empty-desc">
+                        Ask any question about <strong>{escape_html(st.session_state.filename or "your document")}</strong>.<br>
+                        Answers include verifiable source citations and page highlights.
+                    </div>
+                    <div class="chat-suggestions">
+                        <div class="suggestion-chip">💡 "Provide an overview of this document"</div>
+                        <div class="suggestion-chip">💡 "Explain the architecture and key concepts"</div>
                     </div>
                 </div>
                 """,
@@ -2297,7 +3511,7 @@ with right_column:
                 content = message.get("content", "")
 
                 with st.chat_message(role):
-                    st.markdown(escape_html(content))
+                    st.markdown(content)
 
                     render_sources(
                         sources=message.get("sources", []),
@@ -2305,7 +3519,7 @@ with right_column:
                     )
 
     question = st.chat_input(
-        "Ask about your document...",
+        "Ask anything about this document...",
         disabled=not bool(st.session_state.document_id),
     )
 
@@ -2359,7 +3573,7 @@ with right_column:
         save_current_conversation()
 
         with st.chat_message("user"):
-            st.markdown(escape_html(question))
+            st.markdown(question)
 
         # ------------------------------------------------------------
         # 3. Ask the backend and store the assistant message.
@@ -2411,7 +3625,7 @@ with right_column:
                             "Backend returned an empty answer."
                         )
 
-                    st.markdown(escape_html(answer))
+                    st.markdown(answer)
 
                     render_sources(
                         sources=sources,

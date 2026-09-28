@@ -1236,6 +1236,8 @@ def build_document_sources(
             "document_id": document.get("document_id"),
             "filename": document.get("filename"),
             "file_type": document.get("file_type"),
+            "google_drive_file_id": document.get("google_drive_file_id") or chunk.get("google_drive_file_id"),
+            "source_type": document.get("source_type") or chunk.get("source_type"),
             "chunk_id": chunk.get("chunk_id"),
             "chunk_index": chunk.get("chunk_index"),
             "title": source_title,

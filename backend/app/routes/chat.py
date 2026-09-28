@@ -51,6 +51,8 @@ class ChatSource(BaseModel):
     confidence: float | None = None
     all_ocr_bboxes: list[dict] = Field(default_factory=list)
     match_type: str | None = None
+    google_drive_file_id: str | None = None
+    source_type: str | None = None
 
 
 class ChatResponse(BaseModel):
